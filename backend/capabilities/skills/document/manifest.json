@@ -1,0 +1,7 @@
+{
+  "name": "document",
+  "version": "1.0.0",
+  "description": "撰写并导出方案、公文、说明书等结构化文档",
+  "entrypoint": "SKILL.md",
+  "tools": ["create_document", "search_web"]
+}

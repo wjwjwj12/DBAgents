@@ -1,0 +1,7 @@
+{
+  "name": "report",
+  "version": "1.0.0",
+  "description": "完成调研、行业、数据或竞品分析并导出报告",
+  "entrypoint": "SKILL.md",
+  "tools": ["create_document", "search_web"]
+}

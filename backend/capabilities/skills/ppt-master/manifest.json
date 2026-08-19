@@ -1,0 +1,18 @@
+{
+  "name": "ppt",
+  "aliases": ["ppt-master"],
+  "version": "4.7.0",
+  "description": "PPT Master 演示文稿规划、生成、编辑与质量检查工作流",
+  "entrypoint": "PLATFORM.md",
+  "tools": [
+    "generate_ppt",
+    "edit_ppt",
+    "search_web",
+    "load_skill_resource",
+    "analyze_pptx_template",
+    "prepare_pptx_template_fill",
+    "apply_pptx_template_fill",
+    "prepare_pptx_enhancement",
+    "apply_pptx_enhancement"
+  ]
+}

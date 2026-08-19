@@ -1,0 +1,44 @@
+:root {
+  --color-primary: #4b6382;
+  --color-primary-hover: #3a4e68;
+  --color-primary-light: #f0f4f8;
+  --color-app-bg: #f8fafc;
+  --color-content-bg: #ffffff;
+  --color-border: #e2e8f0;
+  --color-text-primary: #1e293b;
+  --color-text-regular: #475569;
+  --color-text-muted: #94a3b8;
+  --background: var(--color-app-bg);
+  --foreground: var(--color-text-primary);
+}
+
+body, html {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+* {
+  box-sizing: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background-color: transparent;
+}
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.08);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.15);
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80" role="img" aria-label="EPAI">
+  <rect width="160" height="80" rx="18" fill="#4B6382"/>
+  <circle cx="35" cy="40" r="19" fill="#F0F4F8" opacity=".18"/>
+  <path d="M25 29h22v7H33v5h13v7H33v5h15v7H25V29Z" fill="#FFFFFF"/>
+  <text x="61" y="50" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="28" font-weight="700" letter-spacing="1">EPAI</text>
+</svg>

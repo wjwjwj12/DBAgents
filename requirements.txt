@@ -1,0 +1,14 @@
+fastapi==0.136.0
+uvicorn==0.45.0
+httpx==0.27.0
+python-dotenv==1.1.1
+pydantic==2.12.1
+SQLAlchemy==2.0.44
+openai==2.8.1
+PyMuPDF==1.27.2.3
+python-docx==1.2.0
+python-multipart==0.0.26
+langgraph==1.2.9
+langgraph-checkpoint-sqlite==3.1.0
+python-pptx==1.0.2
+Pillow==12.1.1

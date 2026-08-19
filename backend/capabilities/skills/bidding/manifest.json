@@ -1,0 +1,7 @@
+{
+  "name": "bidding",
+  "version": "1.0.0",
+  "description": "编制标书与招标响应文档，并标记待核验事实",
+  "entrypoint": "SKILL.md",
+  "tools": ["create_document", "search_web"]
+}
