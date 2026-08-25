@@ -19,7 +19,7 @@ def get_backend_python() -> Path:
     return Path(sys.executable)
 
 
-def build_commands(production: bool = False):
+def build_commands(production: bool = True):
     npm = shutil.which("npm.cmd") or shutil.which("npm")
     backend_python = get_backend_python()
     if not backend_python.exists():
@@ -65,9 +65,11 @@ def build_commands(production: bool = False):
 def wait_until_ready(url: str, processes, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        for process in processes:
+        for name, process in processes:
             if process.poll() is not None:
-                raise RuntimeError(f"服务启动失败，进程退出码：{process.returncode}")
+                raise RuntimeError(
+                    f"{name} 服务启动失败，进程退出码：{process.returncode}"
+                )
         try:
             with urllib.request.urlopen(url, timeout=1):
                 return
@@ -77,11 +79,11 @@ def wait_until_ready(url: str, processes, timeout: float = 60.0) -> None:
 
 
 def stop_processes(processes) -> None:
-    for process in processes:
+    for _name, process in processes:
         if process.poll() is None:
             process.terminate()
     deadline = time.monotonic() + 5
-    for process in processes:
+    for _name, process in processes:
         if process.poll() is None:
             try:
                 process.wait(max(0, deadline - time.monotonic()))
@@ -91,34 +93,60 @@ def stop_processes(processes) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="统一启动 auto-agent 前后端服务")
-    parser.add_argument("--production", action="store_true", help="构建并启动生产版前端")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dev", action="store_true", help="启动开发模式和热更新")
+    mode.add_argument(
+        "--production",
+        action="store_true",
+        help="兼容旧命令：构建并启动生产模式",
+    )
+    parser.add_argument("--build", action="store_true", help="启动前重新构建生产版前端")
     args = parser.parse_args()
+    if args.dev and args.build:
+        parser.error("--dev 不能与 --build 同时使用")
 
     load_dotenv(ROOT_DIR / ".env", override=False)
     try:
-        backend_command, frontend_command, backend_port, frontend_port = build_commands(args.production)
-        if args.production:
+        production = not args.dev
+        backend_command, frontend_command, backend_port, frontend_port = build_commands(
+            production
+        )
+        if args.build or args.production:
             npm = frontend_command[0]
             subprocess.run([npm, "run", "build"], cwd=FRONTEND_DIR, check=True)
+        elif production and not (FRONTEND_DIR / ".next" / "BUILD_ID").is_file():
+            raise RuntimeError("未找到生产构建，请先执行 python start.py --build。")
 
         processes = [
-            subprocess.Popen(backend_command, cwd=ROOT_DIR),
-            subprocess.Popen(frontend_command, cwd=FRONTEND_DIR),
+            ("backend", subprocess.Popen(backend_command, cwd=ROOT_DIR)),
+            ("frontend", subprocess.Popen(frontend_command, cwd=FRONTEND_DIR)),
         ]
         try:
             wait_until_ready(f"http://127.0.0.1:{backend_port}/docs", processes)
             wait_until_ready(f"http://127.0.0.1:{frontend_port}/", processes)
-            print("\nauto-agent 前后端已启动")
-            print(f"网页入口：http://127.0.0.1:{frontend_port}")
-            print(f"接口文档：http://127.0.0.1:{backend_port}/docs")
-            print("按 Ctrl+C 同时停止前后端。\n")
+            print("\nauto-agent 前后端已启动", flush=True)
+            print(f"网页入口：http://127.0.0.1:{frontend_port}", flush=True)
+            print(f"接口文档：http://127.0.0.1:{backend_port}/docs", flush=True)
+            print("按 Ctrl+C 同时停止前后端。\n", flush=True)
 
-            while all(process.poll() is None for process in processes):
+            while True:
+                exited = next(
+                    (
+                        (name, process.returncode)
+                        for name, process in processes
+                        if process.poll() is not None
+                    ),
+                    None,
+                )
+                if exited is not None:
+                    name, returncode = exited
+                    print(
+                        f"{name} 服务意外退出，进程退出码：{returncode}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return returncode or 1
                 time.sleep(0.5)
-            return next(
-                (process.returncode for process in processes if process.returncode),
-                0,
-            )
         finally:
             stop_processes(processes)
     except KeyboardInterrupt:

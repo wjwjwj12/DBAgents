@@ -10,3 +10,5 @@ frontend/.next/
 *.db
 *.log
 data/
+/AI-PPT/
+/*.zip

@@ -154,35 +154,39 @@ function Icon({ name, className }: { name: "brand" | "tools" | "task" | "upload"
 interface ToolItem {
   id: string;
   name: string;
-  category: "便携办公" | "智慧服务" | "AI问数" | "政企服务" | "开发工具";
+  category: "便携办公" | "AI问数" | "政务服务" | "企业服务" | "模型底座" | "开发工具";
   tier: "智能系统" | "AI应用" | "模型底座" | "开发工具";
   description: string;
   url: string;
   logo?: string;
   logoKind?: "image" | "mask";
+  stage: string;
   tags: string[];
 }
 
 const tools: ToolItem[] = [
-  { id: "zhelixun", name: "浙里巡AI", category: "政企服务", tier: "智能系统", description: "面向巡察监督业务提供材料分析和智能辅助能力。", url: "http://10.126.20.144:3009/home", logo: "/tool-logos/zhelixun-mask.png", logoKind: "mask", tags: ["巡察监督", "材料分析"] },
-  { id: "xunqian-ai", name: "巡前AI共性问题分析", category: "政企服务", tier: "智能系统", description: "面向巡前业务归纳共性问题，辅助开展问题分析与研判。", url: "http://10.126.20.144:3010/", logo: "/tool-logos/xunqian-ai.png", tags: ["巡前分析", "问题研判"] },
-  { id: "ai-bidding", name: "AI招投标辅助系统", category: "智慧服务", tier: "智能系统", description: "辅助招投标文档编制、内容检查与业务流程处理。", url: "http://10.126.13.149:3000/login", logo: "/tool-logos/ai-bidding.png", tags: ["招投标", "文档辅助"] },
-  { id: "zhicai-qianwen", name: "智采千问", category: "AI问数", tier: "智能系统", description: "通过自然语言查询业务数据，快速获取指标和分析结论。", url: "http://10.126.20.4:7000/", logo: "/tool-logos/zhicai-qianwen.png", tags: ["自然语言", "数据查询"] },
-  { id: "zhishu", name: "知数", category: "AI问数", tier: "智能系统", description: "提供数据查询、指标洞察与多维度分析服务。", url: "http://10.126.13.221:8006/", logo: "/tool-logos/zhishu.png", tags: ["指标洞察", "数据分析"] },
-  { id: "luba-chat", name: "鹿宝智能对话助手", category: "便携办公", tier: "AI应用", description: "面向日常办公场景提供连续、便捷的智能问答服务。", url: "http://10.126.13.149:1080/chat/XUDCGUhoBpVBVmxm", tags: ["智能问答", "办公助手"] },
-  { id: "resume-selection", name: "简历优选", category: "便携办公", tier: "AI应用", description: "辅助筛选和比较候选人简历，提高初步评估效率。", url: "http://10.126.13.149:1080/workflow/HtQwSc1REUGzKfYg", tags: ["简历筛选", "人才评估"] },
-  { id: "meeting-minutes", name: "音视频会议纪要", category: "便携办公", tier: "AI应用", description: "从音视频内容中提炼会议结论、重点议题和行动事项。", url: "http://10.126.13.149:1080/workflow/8GiH2o34nYKNjsJI", tags: ["音视频", "会议纪要"] },
-  { id: "file-extractor", name: "文件提取器", category: "便携办公", tier: "AI应用", description: "提取文件中的文本内容，快速整理为可继续处理的信息。", url: "http://10.126.13.149:1080/workflow/DfFclYuCDRTLn5hf", tags: ["文本提取", "内容整理"] },
-  { id: "ai-image", name: "AI成图", category: "便携办公", tier: "AI应用", description: "根据文字描述快速生成视觉图片，辅助内容创作与表达。", url: "http://10.126.13.149:1080/workflow/qcOFl52fzWuOwpyI", tags: ["图像生成", "创意设计"] },
-  { id: "mineru-gateway", name: "MinerU Gateway", category: "智慧服务", tier: "模型底座", description: "提供多格式文档解析、任务管理与按页计费的统一网关服务。", url: "http://10.126.13.2:6017/", logo: "/tool-logos/mineru-gateway.svg", tags: ["文档解析", "计费网关"] },
-  { id: "new-api", name: "New API", category: "智慧服务", tier: "模型底座", description: "统一管理模型渠道、接口调用与使用额度。", url: "http://10.126.13.149:12945/", logo: "/tool-logos/new-api.png", tags: ["模型接口", "渠道管理"] },
-  { id: "epai", name: "EPAI", category: "智慧服务", tier: "模型底座", description: "提供企业级AI能力接入与统一服务管理。", url: "https://10.126.13.2:32206/#/login", logo: "/tool-logos/epai.svg", tags: ["AI平台", "统一接入"] },
-  { id: "gpustack", name: "GPUStack", category: "智慧服务", tier: "模型底座", description: "管理GPU资源、模型部署与推理服务。", url: "http://10.126.13.221:890/#/login", logo: "/tool-logos/gpustack.png", tags: ["GPU管理", "模型部署"] },
-  { id: "dify", name: "Dify", category: "开发工具", tier: "开发工具", description: "开发、编排和管理大模型应用与工作流。", url: "http://10.126.13.221:1080/apps", logo: "/tool-logos/dify.ico", tags: ["应用开发", "工作流"] },
-  { id: "ai-knowledge-base", name: "AI知识库", category: "开发工具", tier: "开发工具", description: "提供标书资料入库、智能检索与知识内容管理能力。", url: "http://10.126.20.144:8000/", logo: "/tool-logos/ai-knowledge-base.svg", tags: ["知识库", "智能检索"] },
+  { id: "zhelixun", name: "浙里巡AI-巡视巡察辅助系统", category: "政务服务", tier: "智能系统", description: "面向巡视巡察业务提供智能辅助能力。", url: "http://10.126.20.144:3009", logo: "/tool-logos/zhelixun-mask.png", logoKind: "mask", stage: "对外交付", tags: ["巡察监督", "材料分析"] },
+  { id: "xunqian-ai", name: "巡前AI共性问题分析", category: "政务服务", tier: "智能系统", description: "面向巡前业务归纳共性问题，辅助开展问题分析与研判。", url: "http://10.126.20.144:3010", logo: "/tool-logos/xunqian-ai.png", stage: "对外交付", tags: ["巡前分析", "问题研判"] },
+  { id: "xiansuo-line", name: "AI辅助问题线索处置", category: "政务服务", tier: "智能系统", description: "智能研判问题线索并提供处置方式建议。", url: "http://10.126.20.144:3019/#/aiFileNew?idkey=1", logo: "/tool-logos/xiansuo-line.png", stage: "对外交付", tags: ["问题线索", "线索处置"] },
+  { id: "ai-bidding", name: "AI招投标辅助系统", category: "企业服务", tier: "智能系统", description: "辅助招投标文档编制、内容检查与业务流程处理。", url: "http://10.126.20.144:3000", logo: "/tool-logos/ai-bidding.png", stage: "初步上线", tags: ["招投标", "文档辅助"] },
+  { id: "zhicai-qianwen", name: "采购盘点合规督察", category: "AI问数", tier: "智能系统", description: "导入历史采购数据开展盘点分析，辅助采购合规督察与问答。", url: "http://10.126.20.4:7000/", logo: "/tool-logos/zhicai-qianwen.png", stage: "企业试用", tags: ["采购盘点", "合规督察"] },
+  { id: "zhishu", name: "高速ETC问数", category: "AI问数", tier: "智能系统", description: "针对高速公路ETC业务数据提供指标查询与多维度分析问答。", url: "http://10.126.13.221:8006/", logo: "/tool-logos/zhishu.png", stage: "初步上线", tags: ["ETC问数", "数据分析"] },
+  { id: "contract-review", name: "合同审查", category: "便携办公", tier: "AI应用", description: "对合同文本进行条款审查、风险提示与要点提取。", url: "http://10.126.13.221:1080/workflow/xzk9N5Mudak4kGAo", stage: "生产运行", tags: ["合同审查", "风险提示"] },
+  { id: "resume-selection", name: "简历优选", category: "便携办公", tier: "AI应用", description: "辅助筛选和比较候选人简历，提高初步评估效率。", url: "http://10.126.13.149:1080/workflow/HtQwSc1REUGzKfYg", stage: "企业试用", tags: ["简历筛选", "人才评估"] },
+  { id: "meeting-minutes", name: "音视频会议纪要", category: "便携办公", tier: "AI应用", description: "从音视频内容中提炼会议结论、重点议题和行动事项。", url: "http://10.126.13.149:1080/workflow/8GiH2o34nYKNjsJI", stage: "企业试用", tags: ["音视频", "会议纪要"] },
+  { id: "file-extractor", name: "文件提取器", category: "便携办公", tier: "AI应用", description: "提取文件中的文本内容，快速整理为可继续处理的信息。", url: "http://10.126.13.149:1080/workflow/DfFclYuCDRTLn5hf", stage: "企业试用", tags: ["文本提取", "内容整理"] },
+  { id: "ai-image", name: "AI成图", category: "便携办公", tier: "AI应用", description: "根据文字描述快速生成视觉图片，辅助内容创作与表达。", url: "http://10.126.13.149:1080/workflow/qcOFl52fzWuOwpyI", stage: "企业试用", tags: ["图像生成", "创意设计"] },
+  { id: "luba-chat", name: "鹿宝智能对话助手", category: "便携办公", tier: "AI应用", description: "面向日常办公场景提供连续、便捷的智能问答服务。", url: "http://10.126.13.149:1080/chat/XUDCGUhoBpVBVmxm", stage: "企业试用", tags: ["智能问答", "办公助手"] },
+  { id: "mineru-gateway", name: "MinerU Gateway", category: "模型底座", tier: "模型底座", description: "提供多格式文档解析、任务管理与按页计费的统一网关服务。", url: "http://10.126.13.2:6017/", logo: "/tool-logos/mineru-gateway.svg", stage: "高频开发", tags: ["文档解析", "计费网关"] },
+  { id: "new-api", name: "New API", category: "模型底座", tier: "模型底座", description: "统一管理模型渠道、接口调用与使用额度。", url: "http://10.126.13.149:12945/console", logo: "/tool-logos/new-api.png", stage: "高频开发", tags: ["模型接口", "渠道管理"] },
+  { id: "epai", name: "EPAI", category: "模型底座", tier: "模型底座", description: "提供企业级AI能力接入与统一服务管理。", url: "https://10.126.13.2:32206/#/login", logo: "/tool-logos/epai.svg", stage: "高频开发", tags: ["AI平台", "统一接入"] },
+  { id: "gpustack", name: "GPUStack", category: "模型底座", tier: "模型底座", description: "管理GPU资源、模型部署与推理服务。", url: "http://10.126.13.221:890/#/login", logo: "/tool-logos/gpustack.png", stage: "高频开发", tags: ["GPU管理", "模型部署"] },
+  { id: "dify", name: "Dify", category: "开发工具", tier: "开发工具", description: "开发、编排和管理大模型应用与工作流。", url: "http://10.126.13.221:1080/apps", logo: "/tool-logos/dify.ico", stage: "高频开发", tags: ["应用开发", "工作流"] },
+  { id: "ai-knowledge-base", name: "AI知识库", category: "开发工具", tier: "开发工具", description: "提供资料入库、智能检索与知识内容管理能力。", url: "http://10.126.20.144:8000/", logo: "/tool-logos/ai-knowledge-base.svg", stage: "高频开发", tags: ["知识库", "智能检索"] },
+  { id: "opencode", name: "opencode", category: "开发工具", tier: "开发工具", description: "开源的 AI 编程智能体终端（类 Claude Code）。", url: "http://10.126.33.14:14096", logo: "/tool-logos/opencode.png", stage: "高频开发", tags: ["AI编程", "开发助手"] },
 ];
 
-const toolCategories = ["全部", "便携办公", "智慧服务", "AI问数", "政企服务", "开发工具"] as const;
+const toolCategories = ["全部", "便携办公", "AI问数", "政务服务", "企业服务", "模型底座", "开发工具"] as const;
 const toolTiers: ToolItem["tier"][] = ["智能系统", "AI应用", "模型底座", "开发工具"];
 
 const toArtifact = (artifact: StoredArtifact): ArtifactView => ({
@@ -907,7 +911,7 @@ export default function Home() {
                       {tool.tags.map(tag => <small key={tag}>{tag}</small>)}
                     </span>
                     <span className={styles.toolCardFooter}>
-                      <small>内网应用</small>
+                      <small>{tool.stage}</small>
                       <strong>打开工具 <span aria-hidden="true">↗</span></strong>
                     </span>
                   </a>

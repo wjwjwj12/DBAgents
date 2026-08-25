@@ -4,6 +4,7 @@ const backendUrl = (process.env.BACKEND_URL ?? "http://127.0.0.1:14499").replace
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  allowedDevOrigins: ["10.126.13.149"],
   experimental: {
     proxyClientMaxBodySize: "110mb",
   },
