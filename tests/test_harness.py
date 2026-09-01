@@ -2,6 +2,8 @@ import sys
 import tempfile
 import unittest
 import json
+import os
+import subprocess
 from unittest.mock import patch
 from pathlib import Path
 
@@ -33,25 +35,19 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
     def test_web_search_is_available_without_loading_a_skill(self):
         import agent
 
-        initial_names = {
-            item["function"]["name"]
-            for item in agent.tool_registry.openai_definitions(set(agent.BOOTSTRAP_TOOLS))
-        }
+        initial_names = {item["function"]["name"] for item in agent.tool_registry.openai_definitions()}
         self.assertIn("search_web", initial_names)
 
     async def test_current_time_tool_is_free_and_available_by_default(self):
         import agent
 
-        initial_names = {
-            item["function"]["name"]
-            for item in agent.tool_registry.openai_definitions(set(agent.BOOTSTRAP_TOOLS))
-        }
+        initial_names = {item["function"]["name"] for item in agent.tool_registry.openai_definitions()}
         self.assertIn("get_current_time", initial_names)
 
         result = await agent.tool_registry.execute(
             "get_current_time",
             {"utc_offset": "+08:00", "location": "上海"},
-            ToolContext(allowed_tools=set(agent.BOOTSTRAP_TOOLS)),
+            ToolContext(),
         )
         payload = json.loads(result.content)
         self.assertEqual(payload["location"], "上海")
@@ -123,32 +119,20 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["results"][0]["published_at"], "2026-08-14T00:00:00+08:00")
         self.assertEqual(result["result_count"], 1)
 
-    async def test_loading_skill_enables_its_tools_at_runtime(self):
+    async def test_deep_agents_replaces_custom_skill_loader(self):
         import agent
+        from orchestration.runner import DeepAgentRunner
 
-        context = ToolContext(allowed_tools=set(agent.BOOTSTRAP_TOOLS))
-        initial_names = {
-            item["function"]["name"]
-            for item in agent.tool_registry.openai_definitions(context.allowed_tools)
-        }
-        self.assertNotIn("generate_ppt", initial_names)
-
-        await agent.tool_registry.execute(
-            "load_skill",
-            {"skill_name": "ppt"},
-            context,
-        )
-        loaded_names = {
-            item["function"]["name"]
-            for item in agent.tool_registry.openai_definitions(context.allowed_tools)
-        }
-        self.assertIn("generate_ppt", loaded_names)
-        self.assertIn("load_skill_resource", loaded_names)
-        self.assertIn("analyze_pptx_template", loaded_names)
-        self.assertIn("apply_pptx_template_fill", loaded_names)
-        self.assertIn("prepare_pptx_enhancement", loaded_names)
-        self.assertIn("apply_pptx_enhancement", loaded_names)
-        self.assertIn("ppt", context.loaded_skills)
+        names = agent.tool_registry.names()
+        self.assertNotIn("load_skill", names)
+        self.assertNotIn("load_skill_resource", names)
+        self.assertNotIn("generate_ppt", names)
+        runner = object.__new__(DeepAgentRunner)
+        runner.skills_root = Path(__file__).resolve().parents[1] / "skills"
+        backend = await runner._backend("test-thread")
+        skill = backend.download_files(["/skills/ppt-master/SKILL.md"])[0]
+        self.assertIsNone(skill.error)
+        self.assertIn(b"name: ppt-master", skill.content)
 
         self.assertEqual(
             agent.tool_registry.get("apply_pptx_template_fill").permission,
@@ -159,12 +143,6 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
             PermissionDecision.ASK,
         )
 
-        resource = await agent.tool_registry.execute(
-            "load_skill_resource",
-            {"skill_name": "ppt-master", "resource": "workflows/routing.md"},
-            context,
-        )
-        self.assertIn("Generate PPTX", resource.content)
 
     async def test_registered_tool_is_exposed_and_executed(self):
         async def echo(arguments, _context):
@@ -270,9 +248,36 @@ class ToolRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(skill)
         self.assertEqual(skill.name, "ppt")
         self.assertEqual(skill.version, "4.7.0")
-        self.assertIn("generate_ppt", skill.allowed_tools)
         self.assertEqual(skill.root.name, "ppt-master")
         self.assertFalse((Path(__file__).resolve().parents[1] / "guizang-ppt-skill-main").exists())
+
+    def test_ppt_master_assets_can_be_loaded_from_external_home(self):
+        skill_root = BACKEND_DIR.parent / "skills" / "ppt-master"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            external = Path(temp_dir) / "ppt-master"
+            icon = external / "templates" / "icons" / "tabler-outline" / "home.svg"
+            icon.parent.mkdir(parents=True)
+            icon.write_text('<svg viewBox="0 0 24 24"><path d="M0 0"/></svg>', encoding="utf-8")
+            project = Path(temp_dir) / "project"
+            project.mkdir()
+            environment = os.environ.copy()
+            environment["PPT_MASTER_HOME"] = str(external)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(skill_root / "scripts" / "icon_sync.py"),
+                    str(project),
+                    "tabler-outline/home",
+                ],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue((project / "icons" / "tabler-outline" / "home.svg").is_file())
 
 
 if __name__ == "__main__":

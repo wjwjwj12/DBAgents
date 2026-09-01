@@ -18,6 +18,8 @@ def _load_signing_secret() -> str:
     configured_secret = os.getenv("APP_SECRET_KEY")
     if configured_secret:
         return configured_secret
+    if os.getenv("APP_ENV", "development").lower() == "production":
+        raise RuntimeError("Production requires APP_SECRET_KEY in the server secret store")
     if _SECRET_FILE.exists():
         return _SECRET_FILE.read_text(encoding="utf-8").strip()
 

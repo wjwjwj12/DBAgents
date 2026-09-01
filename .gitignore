@@ -7,8 +7,10 @@ __pycache__/
 backend/venv/
 frontend/node_modules/
 frontend/.next/
+data/logs/
 *.db
 *.log
 data/
 /AI-PPT/
 /*.zip
+.tmp/

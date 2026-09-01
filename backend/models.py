@@ -12,9 +12,13 @@ def utc_now():
 
 class UserModel(Base):
     __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("tenant_id", "external_id", name="uq_user_tenant_external"),)
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    username = Column(String(50), unique=True, nullable=False, index=True)
+    tenant_id = Column(String(100), default="local", nullable=False, index=True)
+    external_id = Column(String(100), default="local-user", nullable=False, index=True)
+    username = Column(String(200), unique=True, nullable=False, index=True)
+    display_name = Column(String(100), nullable=True)
     role = Column(String(20), default="user") # "user" | "admin"
     created_at = Column(DateTime, default=utc_now)
 
@@ -98,6 +102,7 @@ class RunModel(Base):
     engine = Column(String(30), default="react", nullable=False)
     router_confidence = Column(String(10), nullable=True)
     router_reasons = Column(JSON, default=list)
+    selected_skills = Column(JSON, default=list)
     pending_approval = Column(JSON, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now)

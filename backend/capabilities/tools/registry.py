@@ -20,11 +20,16 @@ class ToolPermissionError(RuntimeError):
 class ToolContext:
     run_id: str = ""
     conversation_id: str = ""
+    thread_id: str = ""
+    tenant_id: str = "local"
+    user_id: str = "local-user"
     allowed_tools: Optional[Set[str]] = None
     approved_tools: Set[str] = field(default_factory=set)
     loaded_skills: Set[str] = field(default_factory=set)
     tool_audit: Optional[Callable[[str, Dict[str, Any]], None]] = None
     plan_update: Optional[Callable[[str, list[str]], None]] = None
+    workspace_files: Dict[str, bytes] = field(default_factory=dict)
+    sandbox_file_paths: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -69,6 +74,9 @@ class ToolRegistry:
 
     def get(self, name: str) -> Optional[ToolDefinition]:
         return self._tools.get(name)
+
+    def names(self) -> Set[str]:
+        return set(self._tools)
 
     def requires_checkpoint(self) -> bool:
         return any(tool.permission == PermissionDecision.ASK for tool in self._tools.values())

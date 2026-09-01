@@ -45,19 +45,37 @@ def init_db():
                 "engine": "VARCHAR(30) NOT NULL DEFAULT 'react'",
                 "router_confidence": "VARCHAR(10)",
                 "router_reasons": "JSON",
+                "selected_skills": "JSON",
                 "pending_approval": "JSON",
             }
             for name, definition in additions.items():
                 if name not in columns:
                     connection.exec_driver_sql(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+            user_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(users)")}
+            user_additions = {
+                "tenant_id": "VARCHAR(100) NOT NULL DEFAULT 'local'",
+                "external_id": "VARCHAR(100) NOT NULL DEFAULT 'local-user'",
+                "display_name": "VARCHAR(100)",
+            }
+            for name, definition in user_additions.items():
+                if name not in user_columns:
+                    connection.exec_driver_sql(f"ALTER TABLE users ADD COLUMN {name} {definition}")
 
     # Repair orphaned rows created by older versions before foreign keys were enabled.
 
     db = SessionLocal()
     try:
-        local_user = db.query(UserModel).filter(UserModel.username == "local-user").first()
+        local_user = db.query(UserModel).filter(
+            UserModel.tenant_id == "local",
+            UserModel.external_id == "local-user",
+        ).first()
         if local_user is None:
-            local_user = UserModel(username="local-user")
+            local_user = UserModel(
+                tenant_id="local",
+                external_id="local-user",
+                username="local:local-user",
+                display_name="local-user",
+            )
             db.add(local_user)
             db.flush()
 

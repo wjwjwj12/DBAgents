@@ -149,7 +149,15 @@ class NativePptToolsTests(unittest.IsolatedAsyncioTestCase):
         run = RunModel(conversation_id=self.conversation_id, status="running")
         db.add(run)
         db.commit()
-        with patch.object(agent, "STORAGE_DIR", str(controlled)):
+        with (
+            patch.object(agent, "STORAGE_DIR", str(controlled)),
+            patch.object(agent, "pptx_pdf_preview_available", return_value=False),
+            patch("artifact_display.libreoffice_executable", return_value=None),
+            patch.dict("os.environ", {
+                "LIBREOFFICE_CONVERT_URL": "",
+                "LIBREOFFICE_UNOSERVER_HOST": "",
+            }),
+        ):
             artifact, payload = agent._persist_artifact(db, run.id, {
                 "artifact_type": "ppt",
                 "title": "原生PPTX",
@@ -159,9 +167,9 @@ class NativePptToolsTests(unittest.IsolatedAsyncioTestCase):
                 "preview_kind": "markdown",
                 "preview_content": "# 原生PPTX\n\n已通过校验。",
             }, 0)
-        self.assertEqual(Path(artifact.storage_path).read_bytes(), source.read_bytes())
-        self.assertEqual(payload["markdown"], "# 原生PPTX\n\n已通过校验。")
-        self.assertEqual(agent.read_artifact_preview(artifact)[0], "markdown")
+            self.assertEqual(Path(artifact.storage_path).read_bytes(), source.read_bytes())
+            self.assertEqual(payload["markdown"], "# 原生PPTX\n\n已通过校验。")
+            self.assertEqual(agent.read_artifact_preview(artifact)[0], "markdown")
         db.close()
 
     async def test_upload_accepts_pptx_and_numbered_audio_without_text_parsing(self):

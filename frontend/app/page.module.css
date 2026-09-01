@@ -438,7 +438,8 @@
 }
 
 .markdownContent code {
-  font-family: Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: .9em;
   background: #eff6ff;
   border-radius: 4px;
   padding: 1px 5px;
@@ -446,10 +447,10 @@
 }
 
 .markdownContent pre {
-  margin: 12px 0;
-  padding: 12px 14px;
+  margin: 0;
+  padding: 13px 15px 15px;
   overflow-x: auto;
-  border-radius: 8px;
+  border-radius: 0 0 8px 8px;
   background: #0f172a;
   color: #e2e8f0;
 }
@@ -458,7 +459,45 @@
   padding: 0;
   background: transparent;
   color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.65;
   white-space: pre;
+}
+
+.codeBlock {
+  margin: 12px 0;
+  overflow: hidden;
+  border: 1px solid #263248;
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.codeBlockHeader {
+  display: flex;
+  min-height: 34px;
+  padding: 0 10px 0 14px;
+  align-items: center;
+  justify-content: space-between;
+  color: #94a3b8;
+  background: #172033;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+}
+
+.codeBlockHeader button {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: #cbd5e1;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.codeBlockHeader button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, .08);
 }
 
 .markdownContent a {
@@ -888,6 +927,91 @@
   box-shadow: none;
 }
 
+/* 技能广场 */
+.skillPlaza {
+  overflow-y: auto;
+}
+
+.skillPlazaHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.skillFileInput {
+  display: none;
+}
+
+.skillUploadButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid var(--color-primary);
+  border-radius: 10px;
+  color: #fff;
+  background: var(--color-primary);
+  cursor: pointer;
+}
+
+.skillUploadButton svg {
+  width: 18px;
+}
+
+.skillUploadButton:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
+.skillUploadActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skillSearch {
+  display: flex;
+  width: min(360px, 100%);
+  max-width: 360px;
+  margin: 0;
+}
+
+.skillToolbar {
+  display: flex;
+  width: 100%;
+  margin-bottom: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.skillMessage {
+  margin-bottom: 18px;
+  padding: 11px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  color: var(--color-text-regular);
+  background: var(--color-primary-light);
+}
+
+.skillMessageError {
+  border-color: #efb8b8;
+  color: #9f2929;
+  background: #fff4f4;
+}
+
+@media (max-width: 720px) {
+  .skillPlazaHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .skillToolbar { align-items: stretch; flex-direction: column; }
+  .skillSearch { width: 100%; max-width: none; }
+  .skillUploadActions { align-self: flex-end; }
+}
+
 .sidebarLogo {
   display: flex;
   align-items: center;
@@ -1256,10 +1380,8 @@
 .historyMenuTrigger:focus-visible { opacity: 1; background: #e8e5df; }
 .historyMenuTrigger svg { width: 17px; height: 17px; }
 .historyMenu {
-  position: absolute;
-  z-index: 120;
-  top: 38px;
-  right: 4px;
+  position: fixed;
+  z-index: 10000;
   width: 132px;
   padding: 6px;
   border: 1px solid #dcd7d0;
@@ -1319,7 +1441,7 @@
   animation: cursorBlink .8s steps(1) infinite;
 }
 .companyIntro { margin-top: 16px; color: #8a908b; font-size: 13px !important; letter-spacing: .04em; }
-.attachmentCard svg, .fileTag svg, .fileCardName svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.attachmentCard svg, .fileTag svg { width: 17px; height: 17px; flex: 0 0 auto; }
 .groupHeader svg { width: 16px; height: 16px; transition: transform .18s; }
 .chevronOpen { transform: rotate(90deg); }
 .actionItem { display: flex; align-items: center; gap: 9px; }
@@ -1339,7 +1461,6 @@
 .historyItem:hover { background: rgba(255, 255, 255, .38); }
 .historyItemActive { background: rgba(255, 255, 255, .62); border-color: transparent; }
 .historyMenuTrigger { position: absolute; right: 12px; top: 50%; margin: 0; transform: translateY(-50%); }
-.historyMenu { top: calc(50% + 18px); right: 12px; }
 
 .messagesWrapper { gap: 44px; max-width: 920px; width: 100%; margin: 0 auto; }
 .messageRow { max-width: 100%; width: 100%; }
@@ -1408,9 +1529,6 @@
 .dialogSecondary { border: 1px solid #dcd7d0; color: #5d655f; background: transparent; }
 .dialogPrimary { border: 1px solid #718478; color: #faf9f6; background: #718478; }
 .dialogDanger { border: 1px solid #9a5b55; color: #fffaf8; background: #9a5b55; }
-.approvalToolName { margin-top: 18px; color: #3f4c43; font-size: 14px; font-weight: 700; }
-.approvalArguments { max-height: 220px; margin: 10px 0 0; padding: 12px; overflow: auto; border: 1px solid #ded9d2; border-radius: 10px; color: #4d554f; background: #f3f0eb; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
-
 @keyframes pendingPulse { from { opacity: .45; } to { opacity: 1; } }
 
 /* 更轻的整体背景层级 */
@@ -1541,7 +1659,6 @@
 .historyMenuTrigger { right: 9px; }
 .historyMenuTrigger:hover,
 .historyMenuTrigger:focus-visible { background: #deddd9; }
-.historyMenu { right: 8px; }
 
 /* 智能体中心全宽布局与分类 */
 .toolCenter { padding-left: clamp(28px, 4vw, 64px); padding-right: clamp(28px, 4vw, 64px); }
@@ -2144,6 +2261,67 @@
   width: min(92%, calc((100vh - 112px) * 16 / 9));
 }
 
+.userMessage {
+  position: relative;
+  width: fit-content;
+  max-width: min(74%, 720px);
+}
+
+.userMessage .userBubble {
+  max-width: 100%;
+}
+
+.retryActionRow {
+  display: flex;
+  width: 100%;
+  height: 31px;
+  padding-top: 3px;
+  box-sizing: border-box;
+  justify-content: flex-end;
+}
+
+.retryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: #625e67;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity .15s ease, color .15s ease, background-color .15s ease;
+}
+
+.userMessage:hover .retryButton,
+.retryButton:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.retryButton:hover:not(:disabled) {
+  color: #3f3a45;
+  background: #f5f3f6;
+}
+
+.retryButton:disabled {
+  opacity: 0;
+  cursor: not-allowed;
+}
+
+.userMessage:hover .retryButton:disabled {
+  opacity: .35;
+}
+
+.retryButton svg {
+  width: 15px;
+  height: 15px;
+}
+
 @media (max-width: 680px) {
   .sidebarCollapseBtn { display: none; }
   .filePreviewIframe { min-width: 100%; }
@@ -2178,6 +2356,226 @@
   grid-row: 2;
 }
 
+.inputContainer:not(:has(.textInput[data-expanded="true"])) {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+.inputContainer:not(:has(.textInput[data-expanded="true"])) .textInput {
+  min-height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-self: center;
+}
+.inputContainer:not(:has(.textInput[data-expanded="true"])) .attachBtn,
+.inputContainer:not(:has(.textInput[data-expanded="true"])) .sendBtn {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+}
+.inputContainer:not(:has(.textInput[data-expanded="true"])) .attachBtn svg,
+.inputContainer:not(:has(.textInput[data-expanded="true"])) .sendBtn svg {
+  display: block;
+}
+
+.attachMenuWrapper {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.inputContainer:has(.textInput[data-expanded="true"]) .attachMenuWrapper {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.attachMenu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 140;
+  width: 250px;
+  padding: 7px;
+  border: 1px solid rgba(58, 53, 62, .12);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 14px 36px rgba(43, 39, 47, .14);
+}
+
+.attachMenu > button,
+.attachSkillList button {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 9px;
+  color: #454147;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.attachMenu > button:hover,
+.attachSkillList button:hover,
+.attachSkillActive {
+  background: #f0edf2 !important;
+}
+
+.attachMenu svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.attachMenu > button > svg:last-child {
+  margin-left: auto;
+}
+
+.attachMenuBack {
+  border-bottom: 1px solid #ece9ed !important;
+  border-radius: 8px 8px 0 0 !important;
+}
+
+.attachSkillList {
+  max-height: 260px;
+  margin-top: 5px;
+  overflow-y: auto;
+}
+
+.attachSkillList button > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachSkillList strong,
+.attachSkillList small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachSkillList small,
+.attachMenuHint {
+  color: #858087;
+  font-size: 12px;
+}
+
+.attachMenuHint {
+  display: block;
+  padding: 12px;
+}
+
+.fileTag,
+.attachmentCard {
+  max-width: 230px;
+}
+
+.fileTag strong,
+.attachmentCard span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skillTag {
+  color: #514b68;
+  background: #efedf7;
+  border-color: #dcd7ec;
+}
+
+/* 任务标题固定，仅滚动记录列表 */
+.taskListContainer {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.taskListTitle {
+  flex: 0 0 auto;
+  padding-top: 4px;
+  padding-bottom: 7px;
+  background: inherit;
+}
+
+.taskListRecords {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* 交通线路与数据节点组成的平台用户标识 */
+.sidebarUser .userAvatar {
+  color: #f7ffff;
+  background: linear-gradient(145deg, #356d87, #4f9287);
+  box-shadow: 0 4px 12px rgba(53, 109, 135, .22);
+}
+
+.sidebarUser .userAvatar svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.75;
+}
+
+/* 技能广场与智能体中心使用同一筛选栏尺度 */
+.skillToolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 480px) max-content;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.skillToolbar .skillSearch {
+  width: min(480px, 100%);
+  max-width: 480px;
+  margin: 0;
+  align-self: center;
+}
+
+.skillToolbar .skillSearch input {
+  height: 48px;
+  box-sizing: border-box;
+}
+
+.skillToolbar .skillUploadActions {
+  height: 48px;
+  align-self: center;
+}
+
+.skillUploadButton {
+  height: 48px;
+  min-width: 126px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.skillCard .toolDescription {
+  display: -webkit-box;
+  min-height: 66px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.skillCard .toolTags {
+  max-height: 27px;
+  margin-top: auto;
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .skillToolbar { display: flex; }
+  .skillToolbar .skillSearch { width: 100%; max-width: none; flex-basis: auto; }
+}
+
 /* 工具筛选栏：缩短搜索框，并与分类按钮同排 */
 .toolFilterBar {
   display: flex;
@@ -2203,72 +2601,67 @@
 }
 
 /* 可折叠的思考与执行步骤 */
-.agentGroups {
+.processGroup {
+  width: 100%;
+  margin: 2px 0 18px;
+}
+.processHeader {
   display: flex;
   width: 100%;
-  margin: 2px 0 16px;
-  flex-direction: column;
-  gap: 3px;
-}
-.taskGroup {
-  padding: 0;
+  min-height: 40px;
+  padding: 6px 0 10px;
+  align-items: center;
+  gap: 7px;
   border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.taskGroup:hover,
-.taskGroupOpen {
-  background: transparent;
-  box-shadow: none;
-}
-.groupHeader {
-  width: fit-content;
-  min-height: 32px;
-  padding: 5px 0;
-  border: 0;
+  border-bottom: 1px solid transparent;
   color: #77747a;
   background: transparent;
   font: inherit;
+  font-size: 15px;
   text-align: left;
-  justify-content: flex-start;
-  gap: 7px;
-  transition: color .15s ease;
+  cursor: pointer;
 }
-.groupHeader:hover {
-  color: #4f4c52;
+.processHeader[aria-expanded="true"] {
+  border-bottom-color: #e4e1e5;
 }
-.groupTitle {
-  font-size: 13px;
-  font-weight: 500;
+.processHeader time {
+  color: #8e8b91;
+  font-variant-numeric: tabular-nums;
 }
-.groupChevron {
-  width: 13px;
-  height: 13px;
+.processChevron {
+  width: 14px;
+  height: 14px;
   color: #aaa7ac;
   transition: transform .18s ease;
 }
-.groupContent {
-  margin: 0;
-  padding: 2px 0 10px 22px;
-  gap: 8px;
-}
-.taskGroupOpen .groupContent {
-  max-height: 240px;
-  padding-right: 10px;
+.processViewport {
+  position: relative;
+  max-height: 480px;
+  padding: 8px 10px 12px 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
-.taskGroupOpen .groupContent::-webkit-scrollbar {
+.processViewport::-webkit-scrollbar {
   width: 5px;
 }
-.taskGroupOpen .groupContent::-webkit-scrollbar-thumb {
+.processViewport::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(104, 101, 108, .18);
 }
+.agentGroups {
+  display: flex;
+  width: 100%;
+  margin: 0;
+  flex-direction: column;
+  gap: 10px;
+}
 .thoughtText {
-  padding: 0;
+  max-height: 180px;
+  padding: 2px 8px 4px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border: 0;
   border-radius: 0;
   color: #68656c;
@@ -2276,16 +2669,55 @@
   font-family: inherit;
   font-size: 13px;
   line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.thoughtText::-webkit-scrollbar {
+  width: 4px;
+}
+.thoughtText::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(104, 101, 108, .18);
 }
 .actionItem {
+  display: flex;
+  width: 100%;
+  padding: 5px 0;
+  align-items: center;
+  gap: 9px;
+  border: 0;
   color: #7a777d;
+  background: transparent;
+  font-family: inherit;
   font-size: 13px;
   font-weight: 400;
+  text-align: left;
+}
+.actionItem > span:nth-child(2) {
+  flex: 1;
 }
 .actionItem small {
   color: #aaa7ac;
   font-size: 11px;
   font-weight: 400;
+}
+.actionChevron {
+  width: 12px;
+  height: 12px;
+  color: #b2afb4;
+  transition: transform .18s ease;
+}
+.actionDetail {
+  margin: 0 0 5px 23px;
+  padding: 7px 10px;
+  border-left: 1px solid #dedbe0;
+  color: #8a878d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+@media (max-width: 720px) {
+  .processViewport { max-height: 360px; }
+  .thoughtText { max-height: 140px; }
 }
 
 /* 冷灰蓝品牌主题：集中覆盖历史主题色，不改变既有布局与交互结构 */

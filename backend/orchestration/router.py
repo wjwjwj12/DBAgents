@@ -40,4 +40,4 @@ def select_engine(
         return EngineDecision("dag", 0.86, ("包含多个相互独立的子任务", "可通过有限并发降低延迟"))
     if _LONG_FLOW.search(text) or has_attachment and len(text) > 30:
         return EngineDecision("plan_execute", 0.84, ("存在多步骤交付目标", "需要计划状态与失败后重规划"))
-    return EngineDecision("react", 0.92, ("任务较短或目标开放", "预计工具调用不超过两次"))
+    return EngineDecision("react", 0.92, ("任务较短或目标开放", "预计工具调用次数较少"))

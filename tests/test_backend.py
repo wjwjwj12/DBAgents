@@ -1,13 +1,15 @@
 import io
 import json
 import sys
+import tempfile
 import time
 import unittest
 import uuid
+import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from docx.oxml.ns import qn
 
@@ -23,7 +25,7 @@ from rag.chunker import DocumentChunker
 from security import create_download_token, verify_download_token
 from capabilities.skill_registry import SkillRegistry
 from database import Base
-from models import ArtifactModel, AttachmentModel, ConversationModel, MessageModel, RunEventModel, RunModel, ThreadEventModel, UserModel
+from models import ArtifactModel, AttachmentModel, ConversationModel, ConversationStateModel, MessageModel, RunEventModel, RunModel, ThreadEventModel, UserModel
 from exporters.docx_exporter import export_markdown_to_docx
 
 
@@ -60,6 +62,40 @@ class UploadTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(main.HTTPException) as raised:
                 await main.upload_file(upload)
         self.assertEqual(raised.exception.status_code, 413)
+
+    async def test_skill_zip_is_preflighted_before_private_install(self):
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w") as archive:
+            archive.writestr("user-skill/SKILL.md", "# User skill")
+        upload = UploadFile(file=io.BytesIO(content.getvalue()), filename="user-skill.zip")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(main, "get_user_skill_root", return_value=Path(directory)),
+            patch.object(main, "_generate_skill_intro", new=AsyncMock(return_value="用户技能简介")),
+        ):
+            result = await main.upload_skill(
+                file=upload,
+                identity=agent.LOCAL_IDENTITY,
+            )
+            self.assertTrue(result["success"])
+            self.assertTrue((Path(directory) / "user-skill" / "SKILL.md").is_file())
+
+    async def test_skill_preflight_failure_is_returned_and_not_installed(self):
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w") as archive:
+            archive.writestr("broken-skill/readme.md", "missing entrypoint")
+        upload = UploadFile(file=io.BytesIO(content.getvalue()), filename="broken-skill.zip")
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            main, "get_user_skill_root", return_value=Path(directory)
+        ):
+            with self.assertRaises(main.HTTPException) as raised:
+                await main.upload_skill(
+                    file=upload,
+                    identity=agent.LOCAL_IDENTITY,
+                )
+            self.assertEqual(raised.exception.status_code, 422)
+            self.assertIn("预检未通过", raised.exception.detail)
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
     async def test_remote_failure_uses_local_text_parser(self):
         class FailingClient:
@@ -171,12 +207,32 @@ class RoutingAndRetrievalTests(unittest.TestCase):
         normalized = agent._normalize_base_url("http://gateway.example//v1/")
         self.assertEqual(normalized, "http://gateway.example/v1")
 
+    def test_dialogue_approval_understands_affirmation_and_feedback(self):
+        for response in ("好的", "可以，继续执行", "同意上述方案", "没问题，开始吧"):
+            self.assertEqual(main._approval_decision_from_response(response), "approve")
+        for response in ("先别执行", "可以修改第二点吗？", "不同意", "不行", "把配色调整一下"):
+            self.assertEqual(main._approval_decision_from_response(response), "reject")
+
     def test_general_agent_has_no_fixed_intent_router(self):
         self.assertFalse(hasattr(agent, "IntentRouter"))
         self.assertIn("普通问答", agent._base_system_prompt(""))
 
     def test_report_uses_report_skill(self):
         self.assertEqual(SkillRegistry().get_skill("report").name, "report")
+
+    def test_registry_recommends_skills_from_general_metadata(self):
+        registry = SkillRegistry()
+        self.assertEqual(registry.recommend_skills("请生成一份旅游推介PPT")[0].name, "ppt")
+        self.assertEqual(registry.recommend_skills("编制交通项目投标文件")[0].name, "bidding")
+        self.assertEqual(registry.recommend_skills("生成一份行业调研报告")[0].name, "report")
+        self.assertEqual(registry.recommend_skills("撰写项目实施方案")[0].name, "document")
+        self.assertEqual(registry.recommend_skills("你好，今天天气怎么样"), [])
+
+    def test_explicit_skill_stays_excluded_from_additional_matches(self):
+        registry = SkillRegistry()
+        recommended = registry.recommend_skills("把调研报告做成PPT", exclude={"report"})
+        self.assertNotIn("report", [skill.name for skill in recommended])
+        self.assertIn("ppt", [skill.name for skill in recommended])
 
     def test_chinese_query_retrieves_relevant_chunk(self):
         chunks = [
@@ -187,22 +243,6 @@ class RoutingAndRetrievalTests(unittest.TestCase):
             chunks, "请分析质量与安全措施", top_k=1
         )
         self.assertEqual(result, ["项目质量与安全措施详述"])
-
-    def test_theme_palette_changes_template_variables(self):
-        html = ":root{--ink:#000;--ink-rgb:0,0,0;--paper:#fff;--paper-rgb:255,255,255;--paper-tint:#eee;--ink-tint:#111;}"
-        themed = agent._apply_theme(html, "森林墨")
-        self.assertIn("--ink:#1a2e1f;", themed)
-        self.assertIn("--paper:#f5f1e8;", themed)
-
-    def test_ppt_markup_requires_visible_slide_sections(self):
-        markup = agent._extract_slide_markup(
-            '```html\n<section class="slide"><h1>项目标题</h1><p>这里包含足够的正文内容，用于验证幻灯片确实具有可见信息。</p></section>\n```'
-        )
-        self.assertIn("<h1>项目标题</h1>", markup)
-        with self.assertRaises(ValueError):
-            agent._extract_slide_markup("<div>只有背景</div>")
-        with self.assertRaises(ValueError):
-            agent._extract_slide_markup('<section class="slide"></section>')
 
     def test_download_tokens_are_artifact_specific(self):
         expires = int(time.time()) + 60
@@ -221,8 +261,64 @@ class RoutingAndRetrievalTests(unittest.TestCase):
             "季度_汇报.pptx",
         )
 
+    def test_binary_sandbox_artifact_is_persisted_without_text_conversion(self):
+        payload = b"PK\x03\x04pptx-data"
+
+        class FakeDb:
+            def add(self, _artifact):
+                return None
+
+            def commit(self):
+                return None
+
+            def refresh(self, artifact):
+                artifact.id = "artifact-test"
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(agent, "STORAGE_DIR", temp_dir):
+            artifact, _result = agent._persist_artifact(FakeDb(), "run-test", {
+                "artifact_type": "ppt",
+                "title": "沙箱演示文稿",
+                "extension": "pptx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "content_bytes": payload,
+                "preview_kind": "none",
+            }, 0)
+
+            self.assertEqual(Path(artifact.storage_path).read_bytes(), payload)
+
 
 class RunControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pending_approval_can_only_be_claimed_once(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+        setup = session_factory()
+        user = UserModel(username="approval-user")
+        setup.add(user)
+        setup.flush()
+        conversation = ConversationModel(id=str(uuid.uuid4()), user_id=user.id)
+        setup.add(conversation)
+        run = RunModel(
+            conversation_id=conversation.id,
+            status="awaiting_approval",
+            pending_approval={"name": "request_user_confirmation"},
+        )
+        setup.add(run)
+        setup.commit()
+        run_id = run.id
+        setup.close()
+
+        first_db = session_factory()
+        second_db = session_factory()
+        first_run = first_db.get(RunModel, run_id)
+        second_run = second_db.get(RunModel, run_id)
+        approval = agent._claim_pending_approval(first_db, first_run)
+        self.assertEqual(approval["name"], "request_user_confirmation")
+        with self.assertRaisesRegex(RuntimeError, "already decided"):
+            agent._claim_pending_approval(second_db, second_run)
+        first_db.close()
+        second_db.close()
+
     async def test_running_run_can_be_cancelled_and_queried(self):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
@@ -248,8 +344,132 @@ class RunControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fetched["status"], "cancelled")
         self.assertEqual(fetched["events"], [])
 
+    async def test_terminal_run_can_be_retried_without_copying_user_message_or_attachment(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+        conversation_id = str(uuid.uuid4())
+        captured = {}
+
+        db = session_factory()
+        user = UserModel(username="local-user")
+        db.add(user)
+        db.flush()
+        db.add(ConversationModel(id=conversation_id, user_id=user.id))
+        run = RunModel(conversation_id=conversation_id, status="failed")
+        db.add(run)
+        db.flush()
+        attachment = AttachmentModel(
+            conversation_id=conversation_id,
+            run_id=run.id,
+            file_name="brief.txt",
+            mime_type="text/plain",
+            size_bytes=5,
+            storage_path="unused.txt",
+            extracted_text="brief",
+        )
+        db.add(attachment)
+        db.flush()
+        db.add_all([
+            MessageModel(conversation_id=conversation_id, run_id=run.id, role="user", content="重新分析附件", attachment_name="brief.txt"),
+            RunEventModel(run_id=run.id, sequence=1, event_type="run_started", payload={"query": "重新分析附件"}),
+            ThreadEventModel(
+                conversation_id=conversation_id,
+                run_id=run.id,
+                sequence=1,
+                event_type="user_message",
+                payload={"attachment_ids": [attachment.id], "attachment_name": "brief.txt"},
+            ),
+        ])
+        db.commit()
+        run_id = run.id
+        attachment_id = attachment.id
+        db.close()
+
+        async def fake_run_agent(**kwargs):
+            captured.update(kwargs)
+            yield 'data: {"type":"run_started","run_id":"retry-run"}\n\n'
+
+        with (
+            patch.object(main, "SessionLocal", session_factory),
+            patch.object(agent, "run_agent", fake_run_agent),
+        ):
+            response = await main.retry_run(run_id)
+            chunks = [chunk async for chunk in response.body_iterator]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(chunks)
+        self.assertEqual(captured["query"], "重新分析附件")
+        self.assertEqual(captured["conversation_id"], conversation_id)
+        self.assertEqual(captured["attachment_ids"], [attachment_id])
+        self.assertFalse(captured["persist_user_message"])
+        self.assertEqual(captured["retry_of_run_id"], run_id)
+
+    async def test_active_run_cannot_be_retried(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+        conversation_id = str(uuid.uuid4())
+        db = session_factory()
+        user = UserModel(username="local-user")
+        db.add(user)
+        db.flush()
+        db.add(ConversationModel(id=conversation_id, user_id=user.id))
+        run = RunModel(conversation_id=conversation_id, status="running")
+        db.add(run)
+        db.commit()
+        run_id = run.id
+        db.close()
+
+        with patch.object(main, "SessionLocal", session_factory):
+            with self.assertRaises(main.HTTPException) as raised:
+                await main.retry_run(run_id)
+
+        self.assertEqual(raised.exception.status_code, 409)
+
 
 class ConversationHistoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_conversation_list_is_batched_and_does_not_create_missing_state_rows(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+        db = session_factory()
+        user = UserModel(username="local-user")
+        db.add(user)
+        db.flush()
+        first = ConversationModel(id=str(uuid.uuid4()), user_id=user.id, title="普通任务")
+        pinned = ConversationModel(id=str(uuid.uuid4()), user_id=user.id, title="固定任务")
+        db.add_all([first, pinned])
+        db.flush()
+        db.add_all([
+            ConversationStateModel(conversation_id=pinned.id, is_pinned=True),
+            MessageModel(conversation_id=first.id, role="user", content="第一条消息"),
+            MessageModel(conversation_id=pinned.id, role="assistant", content="固定任务结果"),
+        ])
+        db.commit()
+        db.close()
+
+        select_count = 0
+        def count_selects(_connection, _cursor, statement, _parameters, _context, _executemany):
+            nonlocal select_count
+            if statement.lstrip().upper().startswith("SELECT"):
+                select_count += 1
+
+        event.listen(engine, "before_cursor_execute", count_selects)
+        try:
+            with patch.object(main, "SessionLocal", session_factory):
+                summaries = await main.list_conversations()
+        finally:
+            event.remove(engine, "before_cursor_execute", count_selects)
+
+        self.assertEqual([item["title"] for item in summaries], ["固定任务", "普通任务"])
+        self.assertEqual(summaries[0]["last_message"], "固定任务结果")
+        self.assertFalse(summaries[1]["is_pinned"])
+        self.assertLessEqual(select_count, 2)
+        db = session_factory()
+        self.assertEqual(db.query(ConversationStateModel).count(), 1)
+        db.close()
+
     async def test_conversation_api_hides_corrupted_artifact_source_message(self):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
@@ -277,6 +497,39 @@ class ConversationHistoryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(detail["messages"][0]["content"], "该轮任务未生成有效产物，请重新执行。")
 
+    async def test_conversation_api_replaces_superseded_retry_answer(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+        conversation_id = str(uuid.uuid4())
+        db = session_factory()
+        user = UserModel(username="local-user")
+        db.add(user)
+        db.flush()
+        db.add(ConversationModel(id=conversation_id, user_id=user.id, title="覆盖重试"))
+        original_run = RunModel(conversation_id=conversation_id, status="completed")
+        retry_run = RunModel(conversation_id=conversation_id, status="completed")
+        db.add_all([original_run, retry_run])
+        db.flush()
+        db.add_all([
+            MessageModel(conversation_id=conversation_id, run_id=original_run.id, role="user", content="分析问题"),
+            MessageModel(conversation_id=conversation_id, run_id=original_run.id, role="assistant", content="旧回答"),
+            MessageModel(conversation_id=conversation_id, run_id=retry_run.id, role="assistant", content="新回答"),
+            RunEventModel(
+                run_id=retry_run.id,
+                sequence=1,
+                event_type="run_started",
+                payload={"retry_of_run_id": original_run.id},
+            ),
+        ])
+        db.commit()
+        db.close()
+
+        with patch.object(main, "SessionLocal", session_factory):
+            detail = await main.get_conversation(conversation_id)
+
+        self.assertEqual([message["content"] for message in detail["messages"]], ["分析问题", "新回答"])
+
     async def test_conversation_api_restores_messages_and_artifact_preview(self):
         import tempfile
 
@@ -302,8 +555,13 @@ class ConversationHistoryTests(unittest.IsolatedAsyncioTestCase):
                 MessageModel(conversation_id=conversation_id, run_id=run.id, role="user", content="生成演示文稿"),
                 MessageModel(conversation_id=conversation_id, run_id=run.id, role="assistant", content="已经生成。"),
                 RunEventModel(run_id=run.id, sequence=1, event_type="model_started", payload={"turn": 1}),
-                RunEventModel(run_id=run.id, sequence=2, event_type="tool_started", payload={"name": "generate_ppt", "arguments": {}}),
-                RunEventModel(run_id=run.id, sequence=3, event_type="tool_completed", payload={"name": "generate_ppt"}),
+                RunEventModel(run_id=run.id, sequence=2, event_type="model_delta", payload={"turn": 1, "text": "先读取文档技能说明。"}),
+                RunEventModel(run_id=run.id, sequence=3, event_type="model_started", payload={"turn": 2}),
+                RunEventModel(run_id=run.id, sequence=4, event_type="model_delta", payload={"turn": 2, "text": "正在整理演示文稿结构。"}),
+                RunEventModel(run_id=run.id, sequence=5, event_type="tool_started", payload={"name": "create_document", "arguments": {}}),
+                RunEventModel(run_id=run.id, sequence=6, event_type="tool_completed", payload={"name": "create_document"}),
+                RunEventModel(run_id=run.id, sequence=7, event_type="model_started", payload={"turn": 3}),
+                RunEventModel(run_id=run.id, sequence=8, event_type="model_delta", payload={"turn": 3, "text": "已经生成。"}),
                 ArtifactModel(
                     run_id=run.id,
                     title="历史演示文稿",
@@ -327,8 +585,40 @@ class ConversationHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/download?", artifact["download_url"])
         self.assertIn("/preview?", artifact["preview_url"])
         groups = detail["messages"][1]["groups"]
-        self.assertEqual([group["title"] for group in groups], ["第 1 轮思考", "正在生成任务产物"])
-        self.assertEqual(groups[1]["actions"][-1], {"text": "generate_ppt 执行完成", "status": "done"})
+        self.assertEqual([group["title"] for group in groups], ["第 1 轮思考", "第 2 轮思考", "正在生成任务产物"])
+        self.assertEqual(groups[0]["thoughts"], ["先读取文档技能说明。"])
+        self.assertEqual(groups[1]["thoughts"], ["正在整理演示文稿结构。"])
+        self.assertEqual(groups[2]["actions"][-1], {"text": "正在执行 create_document", "status": "done"})
+        self.assertEqual(detail["messages"][1]["process"]["status"], "completed")
+
+    async def test_conversation_api_moves_leading_process_preamble_to_thoughts(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+        conversation_id = str(uuid.uuid4())
+        db = session_factory()
+        user = UserModel(username="local-user")
+        db.add(user)
+        db.flush()
+        db.add(ConversationModel(id=conversation_id, user_id=user.id, title="代码分析"))
+        run = RunModel(conversation_id=conversation_id, status="completed")
+        db.add(run)
+        db.flush()
+        raw_content = "我来分析这段代码。\n\n让我先梳理代码逻辑。\n\n## 原因分析\n\n端口未正确释放。"
+        db.add_all([
+            MessageModel(conversation_id=conversation_id, run_id=run.id, role="assistant", content=raw_content),
+            RunEventModel(run_id=run.id, sequence=1, event_type="model_started", payload={"turn": 1}),
+            RunEventModel(run_id=run.id, sequence=2, event_type="model_delta", payload={"text": raw_content}),
+        ])
+        db.commit()
+        db.close()
+
+        with patch.object(main, "SessionLocal", session_factory):
+            detail = await main.get_conversation(conversation_id)
+
+        message = detail["messages"][0]
+        self.assertEqual(message["content"], "## 原因分析\n\n端口未正确释放。")
+        self.assertEqual(message["groups"][0]["thoughts"], ["我来分析这段代码。", "让我先梳理代码逻辑。"])
 
     async def test_thread_events_and_state_are_persistent(self):
         engine = create_engine("sqlite:///:memory:")

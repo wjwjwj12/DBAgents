@@ -13,12 +13,13 @@ from typing import Any
 from database import SessionLocal
 from models import ArtifactModel, AttachmentModel, RunModel
 
+from ..skill_registry import get_skill_root
 from .registry import ToolContext, ToolResult
 
 
 PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-SKILL_ROOT = BACKEND_ROOT / "capabilities" / "skills" / "ppt-master"
+SKILL_ROOT = get_skill_root() / "ppt-master"
 SCRIPTS_ROOT = SKILL_ROOT / "scripts"
 NATIVE_STORAGE_ROOT = BACKEND_ROOT / "storage" / "ppt_native"
 MAX_SOURCE_BYTES = 100 * 1024 * 1024

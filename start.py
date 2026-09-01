@@ -127,6 +127,10 @@ def main() -> int:
             print("\nauto-agent 前后端已启动", flush=True)
             print(f"网页入口：http://127.0.0.1:{frontend_port}", flush=True)
             print(f"接口文档：http://127.0.0.1:{backend_port}/docs", flush=True)
+            data_dir = Path(os.getenv("APP_DATA_DIR", "data"))
+            if not data_dir.is_absolute():
+                data_dir = ROOT_DIR / data_dir
+            print(f"后端日志：{data_dir.resolve() / 'logs' / 'app.log'}", flush=True)
             print("按 Ctrl+C 同时停止前后端。\n", flush=True)
 
             while True:
