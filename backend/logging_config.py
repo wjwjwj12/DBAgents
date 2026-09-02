@@ -29,6 +29,9 @@ def configure_logging(log_dir: Path | None = None) -> Path:
     )
     root = logging.getLogger()
     root.setLevel(level)
+    http_level = getattr(logging, os.getenv("HTTPX_LOG_LEVEL", "WARNING").upper(), logging.WARNING)
+    logging.getLogger("httpx").setLevel(http_level)
+    logging.getLogger("httpcore").setLevel(http_level)
 
     targets = [root, logging.getLogger("uvicorn.error"), logging.getLogger("uvicorn.access")]
     close_file_log_handlers()

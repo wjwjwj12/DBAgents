@@ -110,7 +110,7 @@ class OpenSandboxBackendTests(unittest.IsolatedAsyncioTestCase):
         with patch("sandbox.opensandbox_backend.asyncio.sleep", AsyncMock()) as sleep:
             result = await backend.aexecute("exit 7", timeout=5)
 
-        sleep.assert_awaited_once_with(1)
+        sleep.assert_awaited_once_with(5.0)
         self.assertEqual(result.output, "failed output")
         self.assertEqual(result.exit_code, 7)
 

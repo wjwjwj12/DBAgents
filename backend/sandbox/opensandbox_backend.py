@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import timedelta
 from pathlib import PurePosixPath
@@ -12,6 +13,7 @@ from opensandbox.models.filesystem import WriteEntry
 
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
 class OpenSandboxBackend(BaseSandbox):
@@ -50,20 +52,37 @@ class OpenSandboxBackend(BaseSandbox):
             raise RuntimeError("OpenSandbox did not return a background command ID")
 
         default_timeout = max(1, int(os.getenv("SANDBOX_COMMAND_TIMEOUT_SECONDS", "600")))
-        deadline = asyncio.get_running_loop().time() + max(1, timeout or default_timeout)
-        while True:
-            try:
+        poll_interval = max(1, float(os.getenv("SANDBOX_STATUS_POLL_SECONDS", "5")))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + max(1, timeout or default_timeout)
+        next_heartbeat = started + 30
+        logger.info("OpenSandbox command started sandbox=%s execution=%s", self.id, execution.id)
+        try:
+            while True:
                 status = await self._sandbox.commands.get_command_status(execution.id)
-            except Exception as exc:
-                raise RuntimeError("OpenSandbox command status could not be read") from exc
-            if not status.running:
-                break
-            if asyncio.get_running_loop().time() >= deadline:
-                try:
+                if not status.running:
+                    break
+                now = loop.time()
+                if now >= deadline:
                     await self._sandbox.commands.interrupt(execution.id)
-                finally:
                     raise RuntimeError("OpenSandbox command did not complete before the timeout")
-            await asyncio.sleep(1)
+                if now >= next_heartbeat:
+                    logger.info(
+                        "OpenSandbox command still running sandbox=%s execution=%s elapsed=%.0fs",
+                        self.id,
+                        execution.id,
+                        now - started,
+                    )
+                    next_heartbeat = now + 30
+                await asyncio.sleep(poll_interval)
+        except asyncio.CancelledError:
+            await self._sandbox.commands.interrupt(execution.id)
+            raise
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("OpenSandbox command status could not be read") from exc
 
         try:
             logs = await self._sandbox.commands.get_background_command_logs(execution.id)
@@ -73,6 +92,13 @@ class OpenSandboxBackend(BaseSandbox):
         if status.error and status.error not in output:
             output = f"{output}\n{status.error}".strip()
         exit_code = status.exit_code if status.exit_code is not None else (1 if status.error else 0)
+        logger.info(
+            "OpenSandbox command completed sandbox=%s execution=%s exit_code=%s elapsed=%.0fs",
+            self.id,
+            execution.id,
+            exit_code,
+            loop.time() - started,
+        )
         return ExecuteResponse(output=output, exit_code=exit_code, truncated=False)
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
