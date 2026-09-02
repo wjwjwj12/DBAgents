@@ -927,6 +927,7 @@ async def run_agent(
             "attachment_id": attachment_id,
             "attachment_ids": selected_attachment_ids,
             "retry_of_run_id": retry_of_run_id,
+            "requested_skill_ids": requested_skill_ids,
             "selected_skill_ids": [skill.name for skill in selected_skills],
         }, run_id)
         attachment_contexts = []
@@ -954,6 +955,7 @@ async def run_agent(
             "router_confidence": decision.confidence,
             "router_reasons": list(decision.reasons),
             "retry_of_run_id": retry_of_run_id,
+            "requested_skill_ids": requested_skill_ids,
             "selected_skill_ids": [skill.name for skill in selected_skills],
         })
         thread_event = thread_recorder.record("run_started", {"run_id": run_id, "engine": decision.engine}, run_id)

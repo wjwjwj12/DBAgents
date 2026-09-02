@@ -245,6 +245,7 @@ const tools: ToolItem[] = [
   { id: "file-extractor", name: "文件提取器", category: "便携办公", tier: "AI应用", description: "提取文件中的文本内容，快速整理为可继续处理的信息。", url: "http://10.126.13.149:1080/workflow/DfFclYuCDRTLn5hf", stage: "企业试用", tags: ["文本提取", "内容整理"] },
   { id: "ai-image", name: "AI成图", category: "便携办公", tier: "AI应用", description: "根据文字描述快速生成视觉图片，辅助内容创作与表达。", url: "http://10.126.13.149:1080/workflow/qcOFl52fzWuOwpyI", stage: "企业试用", tags: ["图像生成", "创意设计"] },
   { id: "luba-chat", name: "鹿宝智能对话助手", category: "便携办公", tier: "AI应用", description: "面向日常办公场景提供连续、便捷的智能问答服务。", url: "http://10.126.13.149:1080/chat/XUDCGUhoBpVBVmxm", stage: "企业试用", tags: ["智能问答", "办公助手"] },
+  { id: "workflow-cf0pmi", name: "写作搭档", category: "便携办公", tier: "AI应用", description: "通过预设智能工作流处理业务任务。", url: "http://10.126.13.149:1080/workflow/cF0pmIpXDclZU8NJ", stage: "企业试用", tags: ["智能工作流", "AI应用"] },
   { id: "mineru-gateway", name: "MinerU Gateway", category: "模型底座", tier: "模型底座", description: "提供多格式文档解析、任务管理与按页计费的统一网关服务。", url: "http://10.126.13.2:6017/", logo: "/tool-logos/mineru-gateway.svg", stage: "高频开发", tags: ["文档解析", "计费网关"] },
   { id: "new-api", name: "New API", category: "模型底座", tier: "模型底座", description: "统一管理模型渠道、接口调用与使用额度。", url: "http://10.126.13.149:12945/console", logo: "/tool-logos/new-api.png", stage: "高频开发", tags: ["模型接口", "渠道管理"] },
   { id: "epai", name: "EPAI", category: "模型底座", tier: "模型底座", description: "提供企业级AI能力接入与统一服务管理。", url: "https://10.126.13.2:32206/#/login", logo: "/tool-logos/epai.svg", stage: "高频开发", tags: ["AI平台", "统一接入"] },
@@ -773,7 +774,7 @@ export default function Home() {
           assistant.process = {
             runId: event.run_id!,
             status: "running",
-            startedAt: event.created_at || new Date().toISOString(),
+            startedAt: assistant.process?.startedAt || new Date().toISOString(),
           };
         }
         return next;

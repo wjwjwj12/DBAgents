@@ -612,7 +612,13 @@ async def retry_run(run_id: str, identity: RequestIdentity = Depends(get_request
             user_message.attachment_name if user_message else None
         ) or user_payload.get("attachment_name")
         conversation_id = source_run.conversation_id
-        selected_skill_ids = list(source_run.selected_skills or [])
+        recorded_requested_skills = user_payload.get("requested_skill_ids")
+        if isinstance(recorded_requested_skills, list):
+            selected_skill_ids = list(dict.fromkeys(recorded_requested_skills))[:1]
+        else:
+            # Older runs stored user-selected and automatically recommended Skills
+            # together. Preserve the first preference without violating single-select.
+            selected_skill_ids = list(dict.fromkeys(source_run.selected_skills or []))[:1]
     finally:
         db.close()
 

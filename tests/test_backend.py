@@ -356,7 +356,11 @@ class RunControlTests(unittest.IsolatedAsyncioTestCase):
         db.add(user)
         db.flush()
         db.add(ConversationModel(id=conversation_id, user_id=user.id))
-        run = RunModel(conversation_id=conversation_id, status="failed")
+        run = RunModel(
+            conversation_id=conversation_id,
+            status="failed",
+            selected_skills=["ppt", "report"],
+        )
         db.add(run)
         db.flush()
         attachment = AttachmentModel(
@@ -402,6 +406,7 @@ class RunControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["query"], "重新分析附件")
         self.assertEqual(captured["conversation_id"], conversation_id)
         self.assertEqual(captured["attachment_ids"], [attachment_id])
+        self.assertEqual(captured["selected_skill_ids"], ["ppt"])
         self.assertFalse(captured["persist_user_message"])
         self.assertEqual(captured["retry_of_run_id"], run_id)
 

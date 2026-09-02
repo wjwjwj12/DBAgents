@@ -1,0 +1,18 @@
+[Unit]
+Description=DBAgent Web Platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/dbagent/current
+EnvironmentFile=-/etc/dbagent/dbagent.env
+ExecStart=/opt/dbagent/venv/bin/python -u /opt/dbagent/current/start.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+SendSIGKILL=yes
+
+[Install]
+WantedBy=multi-user.target

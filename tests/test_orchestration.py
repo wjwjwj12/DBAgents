@@ -94,6 +94,16 @@ class DagExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
+    def test_runtime_contract_explains_skill_execution_boundary(self):
+        contract = DeepAgentRunner._runtime_contract(
+            ToolContext(),
+            ["create_document"],
+            has_execute=True,
+        )
+
+        self.assertIn("使用沙箱终端执行已加载 Skill 的脚本", contract)
+        self.assertIn("不得因为业务工具列表中没有与工作流同名的工具", contract)
+
     async def test_plain_answer_does_not_create_opensandbox(self):
         create = AsyncMock(side_effect=[stream_with_text("普通回答")])
         client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))

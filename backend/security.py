@@ -18,16 +18,21 @@ def _load_signing_secret() -> str:
     configured_secret = os.getenv("APP_SECRET_KEY")
     if configured_secret:
         return configured_secret
-    if os.getenv("APP_ENV", "development").lower() == "production":
-        raise RuntimeError("Production requires APP_SECRET_KEY in the server secret store")
     if _SECRET_FILE.exists():
-        return _SECRET_FILE.read_text(encoding="utf-8").strip()
+        persisted_secret = _SECRET_FILE.read_text(encoding="utf-8").strip()
+        if persisted_secret:
+            return persisted_secret
 
     generated_secret = secrets.token_urlsafe(48)
     try:
         _SECRET_FILE.write_text(generated_secret, encoding="utf-8")
+        if os.name != "nt":
+            _SECRET_FILE.chmod(0o600)
+        logger.info("Generated persistent download signing key file=%s", _SECRET_FILE)
     except OSError:
-        logger.warning("Could not persist the generated download signing key")
+        logger.warning(
+            "Could not persist the generated download signing key; signed links will reset after restart"
+        )
     return generated_secret
 
 

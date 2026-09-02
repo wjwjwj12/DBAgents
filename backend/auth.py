@@ -19,11 +19,15 @@ LOCAL_IDENTITY = RequestIdentity("local", "local-user", "local-user", "admin")
 
 
 def validate_auth_configuration() -> None:
-    if os.getenv("APP_ENV", "development").lower() == "production":
-        if os.getenv("AUTH_MODE", "development").lower() != "trusted_headers":
-            raise RuntimeError("Production requires AUTH_MODE=trusted_headers")
+    auth_mode = os.getenv("AUTH_MODE", "development").lower()
+    if auth_mode not in {"development", "disabled", "trusted_headers"}:
+        raise RuntimeError("AUTH_MODE must be development, disabled, or trusted_headers")
+    if auth_mode == "trusted_headers":
         if not os.getenv("TRUSTED_PROXY_AUTH_SECRET", "").strip():
-            raise RuntimeError("Production requires TRUSTED_PROXY_AUTH_SECRET")
+            raise RuntimeError("trusted_headers authentication requires TRUSTED_PROXY_AUTH_SECRET")
+        return
+    if os.getenv("APP_ENV", "development").lower() == "production" and auth_mode != "disabled":
+        raise RuntimeError("Production without an authentication gateway requires AUTH_MODE=disabled")
 
 
 async def get_request_identity(

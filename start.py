@@ -1,5 +1,6 @@
 import argparse
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -78,17 +79,54 @@ def wait_until_ready(url: str, processes, timeout: float = 60.0) -> None:
     raise RuntimeError(f"等待服务启动超时：{url}")
 
 
+def start_service(command, cwd: Path):
+    options = {"cwd": cwd}
+    if os.name == "nt":
+        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        options["start_new_session"] = True
+    return subprocess.Popen(command, **options)
+
+
+def signal_process_tree(process, force: bool = False) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        command = ["taskkill", "/PID", str(process.pid), "/T"]
+        if force:
+            command.append("/F")
+        subprocess.run(command, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+
 def stop_processes(processes) -> None:
     for _name, process in processes:
-        if process.poll() is None:
-            process.terminate()
+        signal_process_tree(process)
     deadline = time.monotonic() + 5
     for _name, process in processes:
         if process.poll() is None:
             try:
                 process.wait(max(0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
-                process.kill()
+                signal_process_tree(process, force=True)
+                try:
+                    process.wait(2)
+                except subprocess.TimeoutExpired:
+                    pass
+
+
+def install_signal_handlers() -> None:
+    def request_shutdown(signum, _frame):
+        print(f"收到停止信号 {signal.Signals(signum).name}，正在清理前后端进程树。", file=sys.stderr, flush=True)
+        raise KeyboardInterrupt()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    if os.name != "nt" and hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 
 def main() -> int:
@@ -106,6 +144,7 @@ def main() -> int:
         parser.error("--dev 不能与 --build 同时使用")
 
     load_dotenv(ROOT_DIR / ".env", override=False)
+    install_signal_handlers()
     try:
         production = not args.dev
         backend_command, frontend_command, backend_port, frontend_port = build_commands(
@@ -118,8 +157,8 @@ def main() -> int:
             raise RuntimeError("未找到生产构建，请先执行 python start.py --build。")
 
         processes = [
-            ("backend", subprocess.Popen(backend_command, cwd=ROOT_DIR)),
-            ("frontend", subprocess.Popen(frontend_command, cwd=FRONTEND_DIR)),
+            ("backend", start_service(backend_command, ROOT_DIR)),
+            ("frontend", start_service(frontend_command, FRONTEND_DIR)),
         ]
         try:
             wait_until_ready(f"http://127.0.0.1:{backend_port}/docs", processes)

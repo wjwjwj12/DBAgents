@@ -70,6 +70,13 @@ class MultiTenantTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 validate_auth_configuration()
 
+    def test_production_allows_explicitly_disabled_auth(self):
+        with patch.dict("os.environ", {
+            "APP_ENV": "production",
+            "AUTH_MODE": "disabled",
+        }, clear=False):
+            validate_auth_configuration()
+
 
 if __name__ == "__main__":
     unittest.main()

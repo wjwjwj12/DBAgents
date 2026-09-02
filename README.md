@@ -26,8 +26,13 @@ cd ..
 本项目按 Web 服务器/API/多租户方式运行，不使用本地 Agent 的目录或终端权限。
 生产环境设置 `APP_ENV=production`、`AUTH_MODE=trusted_headers`，并由可信认证网关
 移除客户端同名请求头后，注入 `X-Tenant-ID`、`X-User-ID` 和 `X-Auth-Secret`。
-`TRUSTED_PROXY_AUTH_SECRET`、`APP_SECRET_KEY`、模型密钥只配置在服务器密钥管理或
-进程环境中，不写入源码、技能包或沙箱。
+`TRUSTED_PROXY_AUTH_SECRET`、模型密钥只配置在服务器密钥管理或进程环境中，
+不写入源码、技能包或沙箱。`APP_SECRET_KEY` 为可选配置；未设置时平台会在
+`APP_DATA_DIR/.app_secret` 自动生成并持久化下载签名密钥。
+
+若部署在可信内网且不需要登录或多租户身份隔离，可显式设置
+`AUTH_MODE=disabled`，此时无需配置 `TRUSTED_PROXY_AUTH_SECRET`，所有请求均使用
+同一个本地管理员身份。该模式不可直接暴露到不可信网络。
 
 默认 `SANDBOX_PROVIDER=disabled`，Agent 只有线程状态文件能力，没有本机 Shell。
 需要代码和终端工具时，应配置受管沙箱提供方（当前支持 `langsmith`）；沙箱按
@@ -50,10 +55,22 @@ python start.py --build
 python start.py
 ```
 
-Linux 后台启动：
+Linux 临时后台启动（仅用于短期验证）：
 
 ```bash
 nohup python -u start.py > output.log 2>&1 &
+```
+
+生产环境使用 [`deploy/systemd/dbagent.service`](deploy/systemd/dbagent.service)。
+systemd 会在启动器或子服务异常退出时自动拉起，并通过 cgroup 清理前后端完整
+进程树，避免 `npm` 退出后 `next-server` 继续占用端口。模板不强制创建专用用户；
+复制前应按服务器实际目录和 Python 环境修改 `WorkingDirectory` 与 `ExecStart`。
+安装示例：
+
+```bash
+cp deploy/systemd/dbagent.service /etc/systemd/system/dbagent.service
+systemctl daemon-reload
+systemctl enable --now dbagent
 ```
 
 `-u` 会关闭 Python 日志缓冲。不要在旧的 Next.js 服务仍运行时原地执行
