@@ -56,51 +56,58 @@ class OpenSandboxBackend(BaseSandbox):
 
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         execution_id = uuid.uuid4().hex
-        state_dir = f"/tmp/ai-ppt-exec/{execution_id}"
+        state_prefix = f"/tmp/ai-ppt-exec-{execution_id}"
+        status_path = f"{state_prefix}.status"
+        stdout_path = f"{state_prefix}.stdout"
+        stderr_path = f"{state_prefix}.stderr"
         encoded_command = base64.b64encode(command.encode("utf-8")).decode("ascii")
         wrapped_command = (
-            f"mkdir -p {state_dir}; "
             "if command -v bash >/dev/null 2>&1; then shell=bash; else shell=sh; fi; "
             f"printf %s {encoded_command} | base64 -d | \"$shell\" "
-            f">{state_dir}/stdout 2>{state_dir}/stderr; "
-            f"code=$?; printf %s \"$code\" >{state_dir}/status; exit \"$code\""
+            f">{stdout_path} 2>{stderr_path}; "
+            f"code=$?; printf %s \"$code\" >{status_path}; exit \"$code\""
         )
+        try:
+            await self._sandbox.files.write_files([
+                WriteEntry(path=status_path, data=b"running", mode=600),
+                WriteEntry(path=stdout_path, data=b"", mode=600),
+                WriteEntry(path=stderr_path, data=b"", mode=600),
+            ])
+        except Exception as exc:
+            raise RuntimeError("OpenSandbox command state could not be initialized") from exc
         options = RunCommandOpts(
+            background=True,
             timeout=timedelta(seconds=timeout) if timeout and timeout > 0 else None,
         )
-        execution = None
         transport_error = None
         try:
-            execution = await self._sandbox.commands.run(wrapped_command, opts=options)
+            await self._sandbox.commands.run(wrapped_command, opts=options)
         except Exception as exc:
             if not _is_command_stream_disconnect(exc):
                 raise RuntimeError(f"OpenSandbox command execution failed: {exc}") from exc
             transport_error = exc
 
-        deadline = asyncio.get_running_loop().time() + max(1, timeout or 30)
-        status = None
-        while status is None:
+        default_timeout = max(1, int(os.getenv("SANDBOX_COMMAND_TIMEOUT_SECONDS", "600")))
+        deadline = asyncio.get_running_loop().time() + max(1, timeout or default_timeout)
+        status = "running"
+        while status == "running":
             try:
-                status = (await self._sandbox.files.read_bytes(f"{state_dir}/status")).decode("ascii").strip()
-            except Exception:
+                status = (await self._sandbox.files.read_bytes(status_path)).decode("ascii").strip()
+            except Exception as exc:
+                raise RuntimeError("OpenSandbox command status could not be read") from exc
+            if status == "running":
                 if asyncio.get_running_loop().time() >= deadline:
-                    if transport_error is not None:
-                        raise RuntimeError(
-                            "OpenSandbox command stream disconnected before execution status was recoverable"
-                        ) from transport_error
-                    break
+                    raise RuntimeError("OpenSandbox command did not complete before the timeout")
                 await asyncio.sleep(0.25)
-
-        if status is None:
-            exit_code = execution.exit_code
-            if exit_code is None and execution.error is not None:
-                exit_code = 1
-            return ExecuteResponse(output=str(execution), exit_code=exit_code, truncated=False)
+        try:
+            exit_code = int(status)
+        except ValueError as exc:
+            raise RuntimeError(f"OpenSandbox returned an invalid command status: {status!r}") from exc
 
         try:
             stdout, stderr = await asyncio.gather(
-                self._sandbox.files.read_bytes(f"{state_dir}/stdout"),
-                self._sandbox.files.read_bytes(f"{state_dir}/stderr"),
+                self._sandbox.files.read_bytes(stdout_path),
+                self._sandbox.files.read_bytes(stderr_path),
             )
         except Exception as exc:
             raise RuntimeError("OpenSandbox command completed but its captured output could not be read") from exc
@@ -110,9 +117,9 @@ class OpenSandboxBackend(BaseSandbox):
                 "Recovered OpenSandbox command result after stream disconnect sandbox=%s execution=%s exit_code=%s",
                 self.id,
                 execution_id,
-                status,
+                exit_code,
             )
-        return ExecuteResponse(output=output, exit_code=int(status), truncated=False)
+        return ExecuteResponse(output=output, exit_code=exit_code, truncated=False)
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         return self._run_sync(lambda: self.aupload_files(files))

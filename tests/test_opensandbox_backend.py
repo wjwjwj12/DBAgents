@@ -47,11 +47,11 @@ class FakeFiles:
         self.writes.extend(entries)
 
     async def read_bytes(self, path):
-        if path.endswith("/status"):
+        if path.endswith(".status"):
             return b"0"
-        if path.endswith("/stdout"):
+        if path.endswith(".stdout"):
             return b"command output"
-        if path.endswith("/stderr"):
+        if path.endswith(".stderr"):
             return b""
         return f"download:{path}".encode()
 
@@ -77,6 +77,10 @@ class OpenSandboxBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.output, "command output")
         self.assertEqual(result.exit_code, 0)
         self.assertIn("base64 -d", sandbox.commands.calls[0][0])
+        self.assertTrue(sandbox.commands.calls[0][1].background)
+        state_entries = sandbox.files.writes[:3]
+        self.assertEqual([entry.data for entry in state_entries], [b"running", b"", b""])
+        self.assertTrue(all(entry.path.startswith("/tmp/ai-ppt-exec-") for entry in state_entries))
 
     async def test_command_result_is_recovered_after_stream_read_error(self):
         class BrokenStreamCommands(FakeCommands):
