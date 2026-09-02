@@ -28,7 +28,7 @@ def stream(*deltas):
 
 
 async def main() -> int:
-    required = ("OPENSANDBOX_DOMAIN", "OPENSANDBOX_API_KEY")
+    required = ("OPENSANDBOX_DOMAIN",)
     missing = [name for name in required if not os.getenv(name, "").strip()]
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")

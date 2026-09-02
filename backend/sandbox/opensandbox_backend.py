@@ -1,5 +1,8 @@
 import asyncio
+import base64
+import logging
 import os
+import uuid
 from datetime import timedelta
 from pathlib import PurePosixPath
 from typing import Awaitable, Callable, TypeVar
@@ -12,6 +15,20 @@ from opensandbox.models.filesystem import WriteEntry
 
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
+
+
+def _is_command_stream_disconnect(exc: BaseException) -> bool:
+    """Recognize SDK-wrapped failures raised after a command was submitted."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ in {"ReadError", "RemoteProtocolError"}:
+            return True
+        cause = getattr(current, "cause", None)
+        current = cause if isinstance(cause, BaseException) else current.__cause__
+    return False
 
 
 class OpenSandboxBackend(BaseSandbox):
@@ -38,17 +55,64 @@ class OpenSandboxBackend(BaseSandbox):
         return self._run_sync(lambda: self.aexecute(command, timeout=timeout))
 
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        execution_id = uuid.uuid4().hex
+        state_dir = f"/tmp/ai-ppt-exec/{execution_id}"
+        encoded_command = base64.b64encode(command.encode("utf-8")).decode("ascii")
+        wrapped_command = (
+            f"mkdir -p {state_dir}; "
+            "if command -v bash >/dev/null 2>&1; then shell=bash; else shell=sh; fi; "
+            f"printf %s {encoded_command} | base64 -d | \"$shell\" "
+            f">{state_dir}/stdout 2>{state_dir}/stderr; "
+            f"code=$?; printf %s \"$code\" >{state_dir}/status; exit \"$code\""
+        )
         options = RunCommandOpts(
             timeout=timedelta(seconds=timeout) if timeout and timeout > 0 else None,
         )
+        execution = None
+        transport_error = None
         try:
-            execution = await self._sandbox.commands.run(command, opts=options)
+            execution = await self._sandbox.commands.run(wrapped_command, opts=options)
         except Exception as exc:
-            raise RuntimeError(f"OpenSandbox command execution failed: {exc}") from exc
-        exit_code = execution.exit_code
-        if exit_code is None and execution.error is not None:
-            exit_code = 1
-        return ExecuteResponse(output=str(execution), exit_code=exit_code, truncated=False)
+            if not _is_command_stream_disconnect(exc):
+                raise RuntimeError(f"OpenSandbox command execution failed: {exc}") from exc
+            transport_error = exc
+
+        deadline = asyncio.get_running_loop().time() + max(1, timeout or 30)
+        status = None
+        while status is None:
+            try:
+                status = (await self._sandbox.files.read_bytes(f"{state_dir}/status")).decode("ascii").strip()
+            except Exception:
+                if asyncio.get_running_loop().time() >= deadline:
+                    if transport_error is not None:
+                        raise RuntimeError(
+                            "OpenSandbox command stream disconnected before execution status was recoverable"
+                        ) from transport_error
+                    break
+                await asyncio.sleep(0.25)
+
+        if status is None:
+            exit_code = execution.exit_code
+            if exit_code is None and execution.error is not None:
+                exit_code = 1
+            return ExecuteResponse(output=str(execution), exit_code=exit_code, truncated=False)
+
+        try:
+            stdout, stderr = await asyncio.gather(
+                self._sandbox.files.read_bytes(f"{state_dir}/stdout"),
+                self._sandbox.files.read_bytes(f"{state_dir}/stderr"),
+            )
+        except Exception as exc:
+            raise RuntimeError("OpenSandbox command completed but its captured output could not be read") from exc
+        output = b"\n".join(part for part in (stdout, stderr) if part).decode("utf-8", errors="replace")
+        if transport_error is not None:
+            logger.warning(
+                "Recovered OpenSandbox command result after stream disconnect sandbox=%s execution=%s exit_code=%s",
+                self.id,
+                execution_id,
+                status,
+            )
+        return ExecuteResponse(output=output, exit_code=int(status), truncated=False)
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         return self._run_sync(lambda: self.aupload_files(files))

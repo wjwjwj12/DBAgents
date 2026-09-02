@@ -28,12 +28,12 @@ def _opensandbox_config():
 
     domain = os.getenv("OPENSANDBOX_DOMAIN", "").strip()
     api_key = os.getenv("OPENSANDBOX_API_KEY", "").strip()
-    if not domain or not api_key:
-        raise RuntimeError("OPENSANDBOX_DOMAIN and OPENSANDBOX_API_KEY must be configured")
+    if not domain:
+        raise RuntimeError("OPENSANDBOX_DOMAIN must be configured")
     return ConnectionConfig(
         domain=domain,
         protocol=os.getenv("OPENSANDBOX_PROTOCOL", "http").strip() or "http",
-        api_key=api_key,
+        api_key=api_key or None,
         request_timeout=timedelta(seconds=_positive_int("SANDBOX_REQUEST_TIMEOUT_SECONDS", 180)),
     )
 

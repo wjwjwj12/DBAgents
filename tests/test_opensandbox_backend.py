@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
-from sandbox.factory import get_thread_backend
+from sandbox.factory import _opensandbox_config, get_thread_backend
 from sandbox.lazy_backend import LazySandboxBackend
 from sandbox.opensandbox_backend import OpenSandboxBackend
 
@@ -47,10 +47,27 @@ class FakeFiles:
         self.writes.extend(entries)
 
     async def read_bytes(self, path):
+        if path.endswith("/status"):
+            return b"0"
+        if path.endswith("/stdout"):
+            return b"command output"
+        if path.endswith("/stderr"):
+            return b""
         return f"download:{path}".encode()
 
 
 class OpenSandboxBackendTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_config_does_not_depend_on_cli_or_user_home(self):
+        with patch.dict(
+            os.environ,
+            {"OPENSANDBOX_DOMAIN": "sandbox.internal:7499", "OPENSANDBOX_API_KEY": ""},
+            clear=False,
+        ):
+            config = _opensandbox_config()
+
+        self.assertEqual(config.domain, "sandbox.internal:7499")
+        self.assertIsNone(config.api_key)
+
     async def test_command_execution_maps_to_deepagents_response(self):
         sandbox = SimpleNamespace(id="sandbox-1", commands=FakeCommands(), files=FakeFiles())
         backend = OpenSandboxBackend(sandbox)
@@ -59,7 +76,49 @@ class OpenSandboxBackendTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.output, "command output")
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(sandbox.commands.calls[0][0], "printf ok")
+        self.assertIn("base64 -d", sandbox.commands.calls[0][0])
+
+    async def test_command_result_is_recovered_after_stream_read_error(self):
+        class BrokenStreamCommands(FakeCommands):
+            async def run(self, command, *, opts):
+                self.calls.append((command, opts))
+                raise __import__("httpx").ReadError("incomplete command stream")
+
+        sandbox = SimpleNamespace(id="sandbox-1", commands=BrokenStreamCommands(), files=FakeFiles())
+        backend = OpenSandboxBackend(sandbox)
+
+        result = await backend.aexecute("printf ok", timeout=5)
+
+        self.assertEqual(result.output, "command output")
+        self.assertEqual(result.exit_code, 0)
+
+    async def test_command_result_is_recovered_after_sdk_wraps_stream_error(self):
+        class WrappedStreamCommands(FakeCommands):
+            async def run(self, command, *, opts):
+                self.calls.append((command, opts))
+                read_error = __import__("httpx").ReadError("incomplete command stream")
+                wrapped = RuntimeError("OpenSandbox connection failed")
+                wrapped.cause = read_error
+                raise wrapped from read_error
+
+        sandbox = SimpleNamespace(id="sandbox-1", commands=WrappedStreamCommands(), files=FakeFiles())
+        backend = OpenSandboxBackend(sandbox)
+
+        result = await backend.aexecute("printf ok", timeout=5)
+
+        self.assertEqual(result.output, "command output")
+        self.assertEqual(result.exit_code, 0)
+
+    async def test_unrelated_connection_failure_is_not_reported_as_completed(self):
+        class FailedCommands(FakeCommands):
+            async def run(self, command, *, opts):
+                raise RuntimeError("connection refused")
+
+        sandbox = SimpleNamespace(id="sandbox-1", commands=FailedCommands(), files=FakeFiles())
+        backend = OpenSandboxBackend(sandbox)
+
+        with self.assertRaisesRegex(RuntimeError, "OpenSandbox command execution failed"):
+            await backend.aexecute("printf ok", timeout=5)
 
     async def test_upload_creates_parent_and_download_preserves_bytes(self):
         sandbox = SimpleNamespace(id="sandbox-1", commands=FakeCommands(), files=FakeFiles())
