@@ -1,8 +1,5 @@
 import asyncio
-import base64
-import logging
 import os
-import uuid
 from datetime import timedelta
 from pathlib import PurePosixPath
 from typing import Awaitable, Callable, TypeVar
@@ -15,20 +12,6 @@ from opensandbox.models.filesystem import WriteEntry
 
 
 T = TypeVar("T")
-logger = logging.getLogger(__name__)
-
-
-def _is_command_stream_disconnect(exc: BaseException) -> bool:
-    """Recognize SDK-wrapped failures raised after a command was submitted."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if type(current).__name__ in {"ReadError", "RemoteProtocolError"}:
-            return True
-        cause = getattr(current, "cause", None)
-        current = cause if isinstance(cause, BaseException) else current.__cause__
-    return False
 
 
 class OpenSandboxBackend(BaseSandbox):
@@ -55,70 +38,41 @@ class OpenSandboxBackend(BaseSandbox):
         return self._run_sync(lambda: self.aexecute(command, timeout=timeout))
 
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        execution_id = uuid.uuid4().hex
-        state_prefix = f"/tmp/ai-ppt-exec-{execution_id}"
-        status_path = f"{state_prefix}.status"
-        stdout_path = f"{state_prefix}.stdout"
-        stderr_path = f"{state_prefix}.stderr"
-        encoded_command = base64.b64encode(command.encode("utf-8")).decode("ascii")
-        wrapped_command = (
-            "if command -v bash >/dev/null 2>&1; then shell=bash; else shell=sh; fi; "
-            f"printf %s {encoded_command} | base64 -d | \"$shell\" "
-            f">{stdout_path} 2>{stderr_path}; "
-            f"code=$?; printf %s \"$code\" >{status_path}; exit \"$code\""
-        )
-        try:
-            await self._sandbox.files.write_files([
-                WriteEntry(path=status_path, data=b"running", mode=600),
-                WriteEntry(path=stdout_path, data=b"", mode=600),
-                WriteEntry(path=stderr_path, data=b"", mode=600),
-            ])
-        except Exception as exc:
-            raise RuntimeError("OpenSandbox command state could not be initialized") from exc
         options = RunCommandOpts(
             background=True,
             timeout=timedelta(seconds=timeout) if timeout and timeout > 0 else None,
         )
-        transport_error = None
         try:
-            await self._sandbox.commands.run(wrapped_command, opts=options)
+            execution = await self._sandbox.commands.run(command, opts=options)
         except Exception as exc:
-            if not _is_command_stream_disconnect(exc):
-                raise RuntimeError(f"OpenSandbox command execution failed: {exc}") from exc
-            transport_error = exc
+            raise RuntimeError(f"OpenSandbox command execution failed: {exc}") from exc
+        if not execution.id:
+            raise RuntimeError("OpenSandbox did not return a background command ID")
 
         default_timeout = max(1, int(os.getenv("SANDBOX_COMMAND_TIMEOUT_SECONDS", "600")))
         deadline = asyncio.get_running_loop().time() + max(1, timeout or default_timeout)
-        status = "running"
-        while status == "running":
+        while True:
             try:
-                status = (await self._sandbox.files.read_bytes(status_path)).decode("ascii").strip()
+                status = await self._sandbox.commands.get_command_status(execution.id)
             except Exception as exc:
                 raise RuntimeError("OpenSandbox command status could not be read") from exc
-            if status == "running":
-                if asyncio.get_running_loop().time() >= deadline:
+            if not status.running:
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                try:
+                    await self._sandbox.commands.interrupt(execution.id)
+                finally:
                     raise RuntimeError("OpenSandbox command did not complete before the timeout")
-                await asyncio.sleep(0.25)
-        try:
-            exit_code = int(status)
-        except ValueError as exc:
-            raise RuntimeError(f"OpenSandbox returned an invalid command status: {status!r}") from exc
+            await asyncio.sleep(1)
 
         try:
-            stdout, stderr = await asyncio.gather(
-                self._sandbox.files.read_bytes(stdout_path),
-                self._sandbox.files.read_bytes(stderr_path),
-            )
+            logs = await self._sandbox.commands.get_background_command_logs(execution.id)
         except Exception as exc:
-            raise RuntimeError("OpenSandbox command completed but its captured output could not be read") from exc
-        output = b"\n".join(part for part in (stdout, stderr) if part).decode("utf-8", errors="replace")
-        if transport_error is not None:
-            logger.warning(
-                "Recovered OpenSandbox command result after stream disconnect sandbox=%s execution=%s exit_code=%s",
-                self.id,
-                execution_id,
-                exit_code,
-            )
+            raise RuntimeError("OpenSandbox command completed but its logs could not be read") from exc
+        output = logs.content
+        if status.error and status.error not in output:
+            output = f"{output}\n{status.error}".strip()
+        exit_code = status.exit_code if status.exit_code is not None else (1 if status.error else 0)
         return ExecuteResponse(output=output, exit_code=exit_code, truncated=False)
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:

@@ -15,6 +15,7 @@ from sandbox.opensandbox_backend import OpenSandboxBackend
 
 
 class FakeExecution:
+    id = "execution-1"
     exit_code = 0
     error = None
 
@@ -29,6 +30,15 @@ class FakeCommands:
     async def run(self, command, *, opts):
         self.calls.append((command, opts))
         return FakeExecution()
+
+    async def get_command_status(self, execution_id):
+        return SimpleNamespace(running=False, exit_code=0, error=None)
+
+    async def get_background_command_logs(self, execution_id):
+        return SimpleNamespace(content="command output")
+
+    async def interrupt(self, execution_id):
+        return None
 
 
 class FakeFiles:
@@ -76,42 +86,33 @@ class OpenSandboxBackendTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.output, "command output")
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("base64 -d", sandbox.commands.calls[0][0])
+        self.assertEqual(sandbox.commands.calls[0][0], "printf ok")
         self.assertTrue(sandbox.commands.calls[0][1].background)
-        state_entries = sandbox.files.writes[:3]
-        self.assertEqual([entry.data for entry in state_entries], [b"running", b"", b""])
-        self.assertTrue(all(entry.path.startswith("/tmp/ai-ppt-exec-") for entry in state_entries))
 
-    async def test_command_result_is_recovered_after_stream_read_error(self):
-        class BrokenStreamCommands(FakeCommands):
-            async def run(self, command, *, opts):
-                self.calls.append((command, opts))
-                raise __import__("httpx").ReadError("incomplete command stream")
+    async def test_background_command_waits_for_official_status_and_reads_logs(self):
+        class PollingCommands(FakeCommands):
+            def __init__(self):
+                super().__init__()
+                self.statuses = [
+                    SimpleNamespace(running=True, exit_code=None, error=None),
+                    SimpleNamespace(running=False, exit_code=7, error=None),
+                ]
 
-        sandbox = SimpleNamespace(id="sandbox-1", commands=BrokenStreamCommands(), files=FakeFiles())
+            async def get_command_status(self, execution_id):
+                return self.statuses.pop(0)
+
+            async def get_background_command_logs(self, execution_id):
+                return SimpleNamespace(content="failed output")
+
+        sandbox = SimpleNamespace(id="sandbox-1", commands=PollingCommands(), files=FakeFiles())
         backend = OpenSandboxBackend(sandbox)
 
-        result = await backend.aexecute("printf ok", timeout=5)
+        with patch("sandbox.opensandbox_backend.asyncio.sleep", AsyncMock()) as sleep:
+            result = await backend.aexecute("exit 7", timeout=5)
 
-        self.assertEqual(result.output, "command output")
-        self.assertEqual(result.exit_code, 0)
-
-    async def test_command_result_is_recovered_after_sdk_wraps_stream_error(self):
-        class WrappedStreamCommands(FakeCommands):
-            async def run(self, command, *, opts):
-                self.calls.append((command, opts))
-                read_error = __import__("httpx").ReadError("incomplete command stream")
-                wrapped = RuntimeError("OpenSandbox connection failed")
-                wrapped.cause = read_error
-                raise wrapped from read_error
-
-        sandbox = SimpleNamespace(id="sandbox-1", commands=WrappedStreamCommands(), files=FakeFiles())
-        backend = OpenSandboxBackend(sandbox)
-
-        result = await backend.aexecute("printf ok", timeout=5)
-
-        self.assertEqual(result.output, "command output")
-        self.assertEqual(result.exit_code, 0)
+        sleep.assert_awaited_once_with(1)
+        self.assertEqual(result.output, "failed output")
+        self.assertEqual(result.exit_code, 7)
 
     async def test_unrelated_connection_failure_is_not_reported_as_completed(self):
         class FailedCommands(FakeCommands):

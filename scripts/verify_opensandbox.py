@@ -8,10 +8,13 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
+from dotenv import load_dotenv
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = PROJECT_ROOT / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 from harness.tools import ToolContext, ToolRegistry
 from langchain_core.messages import ToolMessage
@@ -53,8 +56,6 @@ async def main() -> int:
     try:
         backend_a = await get_thread_backend(thread_a)
         clients.append(backend_a)
-        sandbox_ids.add(backend_a.id)
-        original_backend_a_id = backend_a.id
 
         async def shell_execution():
             response = await backend_a.aexecute("printf 'terminal-ready'")
@@ -62,6 +63,8 @@ async def main() -> int:
             return "shell command returned expected stdout"
 
         await check("01 shell command execution", shell_execution)
+        original_backend_a_id = backend_a.id
+        sandbox_ids.add(original_backend_a_id)
 
         async def file_round_trip():
             written = await backend_a.awrite("/workspace/e2e/marker.txt", "alpha")
@@ -78,9 +81,10 @@ async def main() -> int:
         clients.remove(backend_a)
         backend_a = await get_thread_backend(thread_a)
         clients.append(backend_a)
-        sandbox_ids.add(backend_a.id)
 
         async def thread_reuse():
+            probe = await backend_a.aexecute("true")
+            assert probe.exit_code == 0
             assert backend_a.id == original_backend_a_id
             downloaded = await backend_a.adownload_files(["/workspace/e2e/marker.txt"])
             assert downloaded[0].content == b"beta"
@@ -90,7 +94,6 @@ async def main() -> int:
 
         backend_b = await get_thread_backend(thread_b)
         clients.append(backend_b)
-        sandbox_ids.add(backend_b.id)
 
         async def tenant_thread_isolation():
             assert backend_b.id != backend_a.id
@@ -99,6 +102,7 @@ async def main() -> int:
             return "second thread received a different sandbox and no marker file"
 
         await check("04 cross-thread isolation", tenant_thread_isolation)
+        sandbox_ids.add(backend_b.id)
 
         async def nonzero_exit():
             response = await backend_a.aexecute("sh -c 'exit 7'")
@@ -170,6 +174,7 @@ async def main() -> int:
             assert "agent-terminal-ready" in str(tool_result.content)
             assert runner.result.text == "终端验证完成。"
             cleanup_backend = await get_thread_backend(thread_agent)
+            await cleanup_backend.aexecute("true")
             sandbox_ids.add(cleanup_backend.id)
             clients.append(cleanup_backend)
             return "Deep Agents execute tool ran inside OpenSandbox"
