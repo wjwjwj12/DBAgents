@@ -15,6 +15,15 @@ from sandbox.lazy_backend import LazySandboxBackend
 from sandbox.opensandbox_backend import OpenSandboxBackend
 
 
+class SandboxImageDefinitionTests(unittest.TestCase):
+    def test_image_preinstalls_and_validates_curl(self):
+        project_root = Path(__file__).resolve().parents[1]
+        dockerfile = (project_root / "deploy" / "opensandbox" / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn("apt-get install -y --no-install-recommends ca-certificates curl", dockerfile)
+        self.assertIn("curl --version", dockerfile)
+
+
 class FakeExecution:
     id = "execution-1"
     exit_code = 0

@@ -16,7 +16,7 @@ from harness.tools import PermissionDecision
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from orchestration.router import select_engine
-from orchestration.runner import DeepAgentRunner
+from orchestration.runner import DeepAgentRunner, _normalized_skill_entrypoint
 
 
 def stream_with_calls(*calls):
@@ -94,6 +94,26 @@ class DagExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
+    def test_skill_entrypoint_is_normalized_only_in_virtual_copy(self):
+        original = b"---\nname: different-name\ndescription: useful skill\n---\n# Instructions\nDo work.\n"
+
+        normalized = _normalized_skill_entrypoint("uploaded-package-1-0-0", original).decode()
+
+        self.assertIn("name: uploaded-package-1-0-0", normalized)
+        self.assertIn('description: "useful skill"', normalized)
+        self.assertIn("# Instructions", normalized)
+        self.assertIn(b"name: different-name", original)
+
+    def test_skill_entrypoint_synthesizes_required_metadata(self):
+        normalized = _normalized_skill_entrypoint(
+            "plain-skill-1-0-0",
+            "# Plain Skill\n\nProcess the supplied material.\n".encode(),
+        ).decode()
+
+        self.assertTrue(normalized.startswith("---\nname: plain-skill-1-0-0\n"))
+        self.assertIn("description:", normalized)
+        self.assertIn("# Plain Skill", normalized)
+
     def test_runtime_contract_explains_skill_execution_boundary(self):
         contract = DeepAgentRunner._runtime_contract(
             ToolContext(),

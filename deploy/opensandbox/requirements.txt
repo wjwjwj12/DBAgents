@@ -1,4 +1,5 @@
 python-pptx>=0.6.21
+python-docx>=1.1.0
 XlsxWriter>=3.0.0
 skia-pathops>=0.9.2
 uharfbuzz>=0.50.0

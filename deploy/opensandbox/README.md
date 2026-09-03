@@ -5,8 +5,9 @@
 ```bash
 cd AI-PPT/deploy/opensandbox
 docker build -t ai-ppt-sandbox:2026.09 .
+docker run --rm ai-ppt-sandbox:2026.09 curl --version
 docker run --rm ai-ppt-sandbox:2026.09 \
-  python -c "import PIL, fitz, playwright, pptx, xlsxwriter"
+  python -c "import PIL, docx, fitz, playwright, pptx, xlsxwriter"
 ```
 
 随后在 AI-PPT 后端环境中配置：

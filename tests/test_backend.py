@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import sys
@@ -67,6 +68,38 @@ class StartupRecoveryTests(unittest.TestCase):
         self.assertEqual(db.query(PlanTaskModel).filter_by(run_id=approval_id).one().status, "pending")
         db.close()
 
+
+class DetachedEventStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self):
+        if main._BACKGROUND_RUN_TASKS:
+            await asyncio.gather(*tuple(main._BACKGROUND_RUN_TASKS), return_exceptions=True)
+
+    async def test_stream_sends_heartbeat_while_agent_is_idle(self):
+        async def source():
+            await asyncio.sleep(0.03)
+            yield "data: done\n\n"
+
+        stream = main._detached_event_stream(source(), heartbeat_seconds=0.01)
+        self.assertEqual(await anext(stream), ": keep-alive\n\n")
+        item = await anext(stream)
+        while item.startswith(":"):
+            item = await anext(stream)
+        self.assertEqual(item, "data: done\n\n")
+        await stream.aclose()
+
+    async def test_agent_continues_after_http_consumer_disconnects(self):
+        completed = asyncio.Event()
+
+        async def source():
+            yield "data: started\n\n"
+            await asyncio.sleep(0.02)
+            completed.set()
+            yield "data: completed\n\n"
+
+        stream = main._detached_event_stream(source(), heartbeat_seconds=1)
+        self.assertEqual(await anext(stream), "data: started\n\n")
+        await stream.aclose()
+        await asyncio.wait_for(completed.wait(), timeout=0.2)
 
 class UploadTests(unittest.IsolatedAsyncioTestCase):
     def test_default_cors_supports_localhost_and_loopback(self):

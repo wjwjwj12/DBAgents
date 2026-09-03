@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, Red
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from database import init_db, SessionLocal
 from harness.thread_state import ThreadRecorder, get_or_create_state, update_state
@@ -55,6 +55,57 @@ from artifact_display import (
 
 APP_LOG_FILE = configure_logging()
 logger = logging.getLogger(__name__)
+
+_BACKGROUND_RUN_TASKS: set[asyncio.Task] = set()
+_STREAM_END = object()
+_SSE_HEARTBEAT_SECONDS = 15.0
+
+
+def _detached_event_stream(
+    source: AsyncIterator[str],
+    *,
+    heartbeat_seconds: float = _SSE_HEARTBEAT_SECONDS,
+) -> AsyncIterator[str]:
+    """Keep an agent run alive when its HTTP stream is temporarily disconnected."""
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    client_connected = True
+
+    async def produce() -> None:
+        nonlocal client_connected
+        try:
+            async for chunk in source:
+                if client_connected:
+                    queue.put_nowait(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Detached agent stream failed")
+            if client_connected:
+                queue.put_nowait('data: {"type":"error","message":"任务执行失败，请稍后重试"}\n\n')
+        finally:
+            if client_connected:
+                queue.put_nowait(_STREAM_END)
+
+    task = asyncio.create_task(produce())
+    _BACKGROUND_RUN_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_RUN_TASKS.discard)
+
+    async def consume() -> AsyncIterator[str]:
+        nonlocal client_connected
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=heartbeat_seconds)
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                if item is _STREAM_END:
+                    break
+                yield str(item)
+        finally:
+            client_connected = False
+
+    return consume()
 
 
 def _groups_from_run_events(run_id: str, events) -> list[dict]:
@@ -571,8 +622,8 @@ async def chat_stream(request: ChatRequest, identity: RequestIdentity = Depends(
     if invalid_skills:
         raise HTTPException(status_code=422, detail=f"所选技能不存在或无权访问: {', '.join(invalid_skills)}")
 
-    async def event_generator():
-        async for chunk in run_agent(
+    return StreamingResponse(
+        _detached_event_stream(run_agent(
             query=request.query,
             context_text=request.context_text,
             conversation_id=request.conversation_id,
@@ -581,11 +632,7 @@ async def chat_stream(request: ChatRequest, identity: RequestIdentity = Depends(
             attachment_ids=request.attachment_ids,
             selected_skill_ids=request.selected_skill_ids,
             identity=identity,
-        ):
-            yield chunk
-
-    return StreamingResponse(
-        event_generator(),
+        )),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -651,8 +698,9 @@ async def retry_run(run_id: str, identity: RequestIdentity = Depends(get_request
     finally:
         db.close()
 
-    async def event_generator():
-        async for chunk in run_agent(
+    logger.info("Retrying run source_run_id=%s conversation_id=%s", run_id, conversation_id)
+    return StreamingResponse(
+        _detached_event_stream(run_agent(
             query=query,
             conversation_id=conversation_id,
             attachment_name=attachment_name,
@@ -661,12 +709,7 @@ async def retry_run(run_id: str, identity: RequestIdentity = Depends(get_request
             identity=identity,
             persist_user_message=False,
             retry_of_run_id=run_id,
-        ):
-            yield chunk
-
-    logger.info("Retrying run source_run_id=%s conversation_id=%s", run_id, conversation_id)
-    return StreamingResponse(
-        event_generator(),
+        )),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -1132,7 +1175,7 @@ async def decide_run_approval(
         raise HTTPException(status_code=422, detail="请通过对话回复是否同意该方案")
     decision = request.decision or _approval_decision_from_response(response_text)
     return StreamingResponse(
-        resume_agent(run_id, decision, identity, user_response=response_text),
+        _detached_event_stream(resume_agent(run_id, decision, identity, user_response=response_text)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )

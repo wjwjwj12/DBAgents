@@ -3,6 +3,7 @@ import base64
 import logging
 import mimetypes
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -51,6 +52,43 @@ _ARTIFACT_TYPES = {
     ".svg": "image",
     ".zip": "archive",
 }
+
+
+def _normalized_skill_entrypoint(package_name: str, content: bytes) -> bytes:
+    """Build a DeepAgents-compatible virtual entrypoint without changing the package."""
+    text = content.decode("utf-8-sig")
+    body = text
+    description = ""
+    normalized = text.replace("\r\n", "\n")
+    if normalized.startswith("---\n"):
+        front_matter, separator, remainder = normalized[4:].partition("\n---\n")
+        if separator:
+            body = remainder
+            match = re.search(r"(?mi)^description\s*:\s*[\"']?([^\n\"']+)", front_matter)
+            if match:
+                description = match.group(1).strip()
+                if description in {">", "|-", "|", ">-"}:
+                    tail = front_matter[match.end():]
+                    continuation = []
+                    for line in tail.splitlines():
+                        if not line.strip() and not continuation:
+                            continue
+                        if not line.startswith((" ", "\t")):
+                            break
+                        if line.strip():
+                            continuation.append(line.strip())
+                    description = " ".join(continuation)
+    if not description:
+        for line in body.splitlines():
+            candidate = line.strip().lstrip("#").strip()
+            if candidate and candidate != "---" and not candidate.startswith(("```", "- ", "* ", ">")):
+                description = candidate
+                break
+    description = re.sub(r"\s+", " ", description or f"{package_name} skill").strip()[:180]
+    safe_description = description.replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        f'---\nname: {package_name}\ndescription: "{safe_description}"\n---\n{body.lstrip()}'
+    ).encode("utf-8")
 
 
 def _positive_env_int(name: str, default: int) -> int:
@@ -180,14 +218,17 @@ class DeepAgentRunner:
                 )
                 if entrypoint is None:
                     continue
-                relative = "/" + entrypoint.relative_to(skill_root).as_posix()
+                relative = f"/{package_root.name}/SKILL.md"
                 stat = entrypoint.stat()
                 fingerprint = (stat.st_mtime_ns, stat.st_size)
                 self.sandbox_skill_roots[package_root.name] = package_root
                 self.sandbox_skill_files[package_root.name] = [
                     (f"/skills{relative}", entrypoint, fingerprint)
                 ]
-                self.skill_backend.upload_files([(relative, entrypoint.read_bytes())])
+                self.skill_backend.upload_files([(
+                    relative,
+                    _normalized_skill_entrypoint(package_root.name, entrypoint.read_bytes()),
+                )])
                 uploaded_names.add(package_root.name)
         default_backend = await get_thread_backend(thread_id)
         if context is not None and supports_execution(default_backend):
@@ -229,15 +270,20 @@ class DeepAgentRunner:
                     if not path.is_file():
                         continue
                     stat = path.stat()
-                    relative = path.relative_to(package_root.parent).as_posix()
+                    relative = path.relative_to(package_root).as_posix()
                     files.append((
-                        f"/skills/{relative}",
+                        f"/skills/{skill_name}/{relative}",
                         path,
                         (stat.st_mtime_ns, stat.st_size),
                     ))
                 self.sandbox_skill_files[skill_name] = files
             store_files = [
-                (sandbox_path.removeprefix("/skills"), local_path.read_bytes())
+                (
+                    sandbox_path.removeprefix("/skills"),
+                    _normalized_skill_entrypoint(skill_name, local_path.read_bytes())
+                    if local_path.name.casefold() == "skill.md"
+                    else local_path.read_bytes(),
+                )
                 for skill_name in sorted(new_names)
                 for sandbox_path, local_path, _fingerprint in self.sandbox_skill_files.get(skill_name, [])
             ]
@@ -253,7 +299,12 @@ class DeepAgentRunner:
             for item in self.sandbox_skill_files.get(skill_name, [])
         ]
         changed = [
-            (sandbox_path, local_path.read_bytes())
+            (
+                sandbox_path,
+                _normalized_skill_entrypoint(skill_name, local_path.read_bytes())
+                if local_path.name.casefold() == "skill.md"
+                else local_path.read_bytes(),
+            )
             for sandbox_path, local_path, fingerprint in selected_files
             if synced.get(sandbox_path) != fingerprint
         ]
