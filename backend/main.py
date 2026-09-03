@@ -174,11 +174,40 @@ def _artifact_download_filename(title: str, storage_path: str) -> str:
 
 app = FastAPI(title="交数智航 API")
 
+
+def _finalize_interrupted_runs() -> int:
+    db = SessionLocal()
+    try:
+        runs = db.query(RunModel).filter(RunModel.status.in_({"pending", "running"})).all()
+        if not runs:
+            return 0
+        completed_at = utc_now()
+        run_ids = [run.id for run in runs]
+        for run in runs:
+            run.status = "failed"
+            run.error_message = "服务重启或上一次执行中断，请重试该任务。"
+            run.completed_at = completed_at
+        for task in db.query(PlanTaskModel).filter(
+            PlanTaskModel.run_id.in_(run_ids),
+            PlanTaskModel.status.in_({"pending", "running"}),
+        ):
+            task.status = "failed"
+            task.error_message = "任务执行进程已中断"
+            task.completed_at = completed_at
+        db.commit()
+        return len(runs)
+    finally:
+        db.close()
+
+
 # Initialize SQLite/Database schema on startup
 @app.on_event("startup")
 def on_startup():
     validate_auth_configuration()
     init_db()
+    interrupted = _finalize_interrupted_runs()
+    if interrupted:
+        logger.warning("Marked interrupted runs as failed count=%d", interrupted)
     logger.info("Application started log_file=%s", APP_LOG_FILE)
 
 

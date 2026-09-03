@@ -25,8 +25,47 @@ from rag.chunker import DocumentChunker
 from security import create_download_token, verify_download_token
 from capabilities.skill_registry import SkillRegistry
 from database import Base
-from models import ArtifactModel, AttachmentModel, ConversationModel, ConversationStateModel, MessageModel, RunEventModel, RunModel, ThreadEventModel, UserModel
+from models import ArtifactModel, AttachmentModel, ConversationModel, ConversationStateModel, MessageModel, PlanTaskModel, RunEventModel, RunModel, ThreadEventModel, UserModel
 from exporters.docx_exporter import export_markdown_to_docx
+
+
+class StartupRecoveryTests(unittest.TestCase):
+    def test_startup_finalizes_only_runs_without_a_live_executor(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+        db = session_factory()
+        user = UserModel(username="startup-user")
+        db.add(user)
+        db.flush()
+        conversation = ConversationModel(user_id=user.id, title="启动恢复")
+        db.add(conversation)
+        db.flush()
+        pending = RunModel(conversation_id=conversation.id, status="pending")
+        running = RunModel(conversation_id=conversation.id, status="running")
+        approval = RunModel(conversation_id=conversation.id, status="awaiting_approval")
+        db.add_all([pending, running, approval])
+        db.flush()
+        db.add_all([
+            PlanTaskModel(run_id=pending.id, position=1, title="等待执行", status="pending"),
+            PlanTaskModel(run_id=running.id, position=1, title="执行中", status="running"),
+            PlanTaskModel(run_id=approval.id, position=1, title="等待确认", status="pending"),
+        ])
+        db.commit()
+        pending_id, running_id, approval_id = pending.id, running.id, approval.id
+        db.close()
+
+        with patch.object(main, "SessionLocal", session_factory):
+            count = main._finalize_interrupted_runs()
+
+        db = session_factory()
+        self.assertEqual(count, 2)
+        self.assertEqual(db.get(RunModel, pending_id).status, "failed")
+        self.assertEqual(db.get(RunModel, running_id).status, "failed")
+        self.assertEqual(db.get(RunModel, approval_id).status, "awaiting_approval")
+        self.assertEqual(db.query(PlanTaskModel).filter_by(run_id=running_id).one().status, "failed")
+        self.assertEqual(db.query(PlanTaskModel).filter_by(run_id=approval_id).one().status, "pending")
+        db.close()
 
 
 class UploadTests(unittest.IsolatedAsyncioTestCase):
