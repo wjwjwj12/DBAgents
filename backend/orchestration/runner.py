@@ -420,7 +420,11 @@ class DeepAgentRunner:
             tools=[self._tool_adapter(name, context) for name in tool_names],
             system_prompt="\n\n".join(filter(None, (system_prompt, runtime_contract))),
             middleware=[
-                ModelRetryMiddleware(max_retries=2, backoff_factor=2.0, initial_delay=0.5),
+                ModelRetryMiddleware(
+                    max_retries=_positive_env_int("AGENT_MODEL_RETRIES", 1),
+                    backoff_factor=2.0,
+                    initial_delay=0.5,
+                ),
                 ToolErrorMiddleware(recoverable_tool_error),
                 ModelCallLimitMiddleware(run_limit=self.max_turns, exit_behavior="end"),
                 ToolCallLimitMiddleware(run_limit=self.max_tool_calls, exit_behavior="continue"),
@@ -475,6 +479,25 @@ class DeepAgentRunner:
                 reasoning = str(message.additional_kwargs.get("reasoning_content", ""))
                 if reasoning:
                     return sanitize_assistant_text(reasoning).strip()
+        return ""
+
+    @staticmethod
+    def _last_tool_text(messages: List[Any]) -> str:
+        for message in reversed(messages):
+            if not isinstance(message, ToolMessage):
+                continue
+            if isinstance(message.content, str):
+                text = message.content.strip()
+            elif isinstance(message.content, list):
+                text = "\n".join(
+                    str(block.get("text", ""))
+                    for block in message.content
+                    if isinstance(block, dict) and block.get("type") in {"text", "output_text"}
+                ).strip()
+            else:
+                text = str(message.content).strip()
+            if text and not text.startswith("工具执行失败"):
+                return text
         return ""
 
     @staticmethod
@@ -606,7 +629,11 @@ class DeepAgentRunner:
         self.result.text = self._final_text(self.messages)
         try:
             if self.result.text.startswith("Model call failed after "):
-                raise RuntimeError(self.result.text)
+                fallback = self._last_tool_text(self.messages)
+                if not fallback:
+                    raise RuntimeError(self.result.text)
+                logger.warning("Using the last successful tool result after model failure")
+                self.result.text = fallback
             await self._collect_sandbox_artifacts()
         finally:
             await self._close_sandbox_client()

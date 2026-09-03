@@ -259,6 +259,32 @@ class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
                 ToolContext(conversation_id="failure-thread", run_id="failure-run"),
             )]
 
+    async def test_model_failure_after_tool_uses_last_successful_tool_result(self):
+        async def noop(_arguments, _context):
+            return ToolResult(content="工具已经完成的有效结果")
+
+        registry = ToolRegistry()
+        registry.register(ToolDefinition(
+            name="noop",
+            description="noop",
+            parameters={"type": "object", "properties": {}},
+            handler=noop,
+        ))
+        call = SimpleNamespace(index=0, id="noop-1", function=SimpleNamespace(name="noop", arguments="{}"))
+        create = AsyncMock(side_effect=[
+            stream_with_calls(call),
+            stream_with_text("Model call failed after 2 attempts with APITimeoutError"),
+        ])
+        client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        runner = DeepAgentRunner(model=client, tools=registry)
+
+        [event async for event in runner.run(
+            [{"role": "user", "content": "执行并总结"}],
+            ToolContext(conversation_id="fallback-thread", run_id="fallback-run"),
+        )]
+
+        self.assertEqual(runner.result.text, "工具已经完成的有效结果")
+
 
 class ApprovalResumeTests(unittest.IsolatedAsyncioTestCase):
     async def test_ask_tool_pauses_and_resumes_from_checkpoint(self):

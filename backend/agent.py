@@ -71,7 +71,7 @@ def _get_llm_client() -> ChatOpenAI:
         temperature=0.5,
         streaming=True,
         max_retries=0,
-        timeout=float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "180")),
+        timeout=float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "60")),
     )
 
 

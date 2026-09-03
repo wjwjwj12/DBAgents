@@ -11,6 +11,8 @@ data/logs/
 *.db
 *.log
 data/
+!skills/ppt-master/scripts/pptx_shapes/data/
+!skills/ppt-master/scripts/pptx_shapes/data/**
 /AI-PPT/
 /*.zip
 .tmp/
