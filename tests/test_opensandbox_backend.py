@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -124,6 +125,20 @@ class OpenSandboxBackendTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "OpenSandbox command execution failed"):
             await backend.aexecute("printf ok", timeout=5)
+
+    async def test_hung_status_request_is_bounded_and_interrupted(self):
+        class HungCommands(FakeCommands):
+            async def get_command_status(self, execution_id):
+                await asyncio.Event().wait()
+
+        commands = HungCommands()
+        sandbox = SimpleNamespace(id="sandbox-1", commands=commands, files=FakeFiles())
+        backend = OpenSandboxBackend(sandbox)
+
+        with self.assertRaisesRegex(RuntimeError, "status request timed out"):
+            await backend.aexecute("printf ok", timeout=1)
+
+        self.assertEqual(len(commands.calls), 1)
 
     async def test_upload_creates_parent_and_download_preserves_bytes(self):
         sandbox = SimpleNamespace(id="sandbox-1", commands=FakeCommands(), files=FakeFiles())

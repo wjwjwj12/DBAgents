@@ -280,25 +280,43 @@ class DeepAgentRunner:
     @staticmethod
     async def _sandbox_outputs(backend) -> Dict[str, tuple[int, str]]:
         files: Dict[str, tuple[int, str]] = {}
-        for extension in _ARTIFACT_TYPES:
-            result = await backend.aglob(f"*{extension}", "/outputs")
-            if result.error:
+        try:
+            result = await asyncio.wait_for(backend.aglob("*", "/outputs"), timeout=60)
+        except TimeoutError:
+            logger.warning("Timed out while scanning sandbox outputs")
+            return files
+        except Exception as exc:
+            logger.warning("Failed to scan sandbox outputs: %s", exc)
+            return files
+        if result.error:
+            logger.warning("Failed to scan sandbox outputs: %s", result.error)
+            return files
+        for item in result.matches or []:
+            path = str(item.get("path", ""))
+            if Path(path).suffix.lower() not in _ARTIFACT_TYPES:
                 continue
-            for item in result.matches or []:
-                files[item["path"]] = (int(item.get("size", 0)), str(item.get("modified_at", "")))
+            files[path] = (int(item.get("size", 0)), str(item.get("modified_at", "")))
         return files
 
     async def _collect_sandbox_artifacts(self) -> None:
         if self.sandbox_backend is None or not getattr(self.sandbox_backend, "is_active", True):
             return
+        logger.info("Scanning sandbox outputs sandbox=%s", self.sandbox_backend.id)
         current = await self._sandbox_outputs(self.sandbox_backend)
         changed = [path for path, fingerprint in current.items() if self.sandbox_output_state.get(path) != fingerprint]
         if not changed:
+            logger.info("Sandbox output scan completed sandbox=%s artifacts=0", self.sandbox_backend.id)
             return
         max_bytes = _positive_env_int("SANDBOX_MAX_ARTIFACT_BYTES", 104857600)
         if len(changed) > 20:
             raise RuntimeError("Sandbox produced more than 20 output artifacts")
-        downloads = await self.sandbox_backend.adownload_files(changed)
+        try:
+            downloads = await asyncio.wait_for(
+                self.sandbox_backend.adownload_files(changed),
+                timeout=60,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError("Timed out while downloading sandbox artifacts") from exc
         artifacts = self.result.outputs.setdefault("artifacts", [])
         for response in downloads:
             if response.error or response.content is None:
@@ -316,6 +334,7 @@ class DeepAgentRunner:
                 "preview_kind": "none",
             })
         self.sandbox_output_state = current
+        logger.info("Sandbox output scan completed sandbox=%s artifacts=%d", self.sandbox_backend.id, len(changed))
 
     async def _close_sandbox_client(self) -> None:
         backend = self.sandbox_backend

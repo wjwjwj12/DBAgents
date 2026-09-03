@@ -129,17 +129,22 @@ class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         payload = b"PK\x03\x04pptx-data"
 
         class FakeSandbox:
+            id = "sandbox-1"
+            patterns = []
+
             async def aglob(self, pattern, path):
-                matches = []
-                if pattern == "*.pptx":
-                    matches = [{"path": "/outputs/deck.pptx", "size": len(payload), "modified_at": "now"}]
-                return SimpleNamespace(error=None, matches=matches)
+                self.patterns.append((pattern, path))
+                return SimpleNamespace(error=None, matches=[
+                    {"path": "/outputs/deck.pptx", "size": len(payload), "modified_at": "now"},
+                    {"path": "/outputs/debug.txt", "size": 5, "modified_at": "now"},
+                ])
 
             async def adownload_files(self, paths):
                 return [SimpleNamespace(path=paths[0], content=payload, error=None)]
 
         runner = DeepAgentRunner(model=SimpleNamespace(), tools=ToolRegistry())
-        runner.sandbox_backend = FakeSandbox()
+        sandbox = FakeSandbox()
+        runner.sandbox_backend = sandbox
 
         await runner._collect_sandbox_artifacts()
 
@@ -147,6 +152,7 @@ class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(artifact["artifact_type"], "ppt")
         self.assertEqual(artifact["extension"], "pptx")
         self.assertEqual(artifact["content_bytes"], payload)
+        self.assertEqual(sandbox.patterns, [("*", "/outputs")])
 
     async def test_skill_files_are_synced_into_execution_sandbox(self):
         uploaded = []

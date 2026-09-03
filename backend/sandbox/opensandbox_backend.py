@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from contextlib import suppress
 from datetime import timedelta
 from pathlib import PurePosixPath
 from typing import Awaitable, Callable, TypeVar
@@ -40,32 +41,48 @@ class OpenSandboxBackend(BaseSandbox):
         return self._run_sync(lambda: self.aexecute(command, timeout=timeout))
 
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        default_timeout = max(1, int(os.getenv("SANDBOX_COMMAND_TIMEOUT_SECONDS", "600")))
+        command_timeout = max(1, timeout or default_timeout)
+        control_timeout = min(30, command_timeout)
         options = RunCommandOpts(
             background=True,
             timeout=timedelta(seconds=timeout) if timeout and timeout > 0 else None,
         )
         try:
-            execution = await self._sandbox.commands.run(command, opts=options)
+            execution = await asyncio.wait_for(
+                self._sandbox.commands.run(command, opts=options),
+                timeout=control_timeout,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError("OpenSandbox command submission timed out") from exc
         except Exception as exc:
             raise RuntimeError(f"OpenSandbox command execution failed: {exc}") from exc
         if not execution.id:
             raise RuntimeError("OpenSandbox did not return a background command ID")
 
-        default_timeout = max(1, int(os.getenv("SANDBOX_COMMAND_TIMEOUT_SECONDS", "600")))
         poll_interval = max(1, float(os.getenv("SANDBOX_STATUS_POLL_SECONDS", "5")))
         loop = asyncio.get_running_loop()
         started = loop.time()
-        deadline = started + max(1, timeout or default_timeout)
+        deadline = started + command_timeout
         next_heartbeat = started + 30
         logger.info("OpenSandbox command started sandbox=%s execution=%s", self.id, execution.id)
         try:
             while True:
-                status = await self._sandbox.commands.get_command_status(execution.id)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    with suppress(Exception):
+                        await asyncio.wait_for(self._sandbox.commands.interrupt(execution.id), timeout=10)
+                    raise RuntimeError("OpenSandbox command did not complete before the timeout")
+                status = await asyncio.wait_for(
+                    self._sandbox.commands.get_command_status(execution.id),
+                    timeout=min(control_timeout, remaining),
+                )
                 if not status.running:
                     break
                 now = loop.time()
                 if now >= deadline:
-                    await self._sandbox.commands.interrupt(execution.id)
+                    with suppress(Exception):
+                        await asyncio.wait_for(self._sandbox.commands.interrupt(execution.id), timeout=10)
                     raise RuntimeError("OpenSandbox command did not complete before the timeout")
                 if now >= next_heartbeat:
                     logger.info(
@@ -77,15 +94,27 @@ class OpenSandboxBackend(BaseSandbox):
                     next_heartbeat = now + 30
                 await asyncio.sleep(poll_interval)
         except asyncio.CancelledError:
-            await self._sandbox.commands.interrupt(execution.id)
+            with suppress(Exception):
+                await asyncio.shield(
+                    asyncio.wait_for(self._sandbox.commands.interrupt(execution.id), timeout=10)
+                )
             raise
+        except TimeoutError as exc:
+            with suppress(Exception):
+                await asyncio.wait_for(self._sandbox.commands.interrupt(execution.id), timeout=10)
+            raise RuntimeError("OpenSandbox command status request timed out") from exc
         except RuntimeError:
             raise
         except Exception as exc:
             raise RuntimeError("OpenSandbox command status could not be read") from exc
 
         try:
-            logs = await self._sandbox.commands.get_background_command_logs(execution.id)
+            logs = await asyncio.wait_for(
+                self._sandbox.commands.get_background_command_logs(execution.id),
+                timeout=control_timeout,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError("OpenSandbox command log request timed out") from exc
         except Exception as exc:
             raise RuntimeError("OpenSandbox command completed but its logs could not be read") from exc
         output = logs.content
