@@ -5,6 +5,8 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
@@ -18,6 +20,9 @@ from capabilities.skill_installer import (  # noqa: E402
     preflight_skill_files,
 )
 from capabilities.skill_registry import SkillRegistry  # noqa: E402
+from capabilities.remote_skill_installer import SkillDownloadError, download_skill_archive  # noqa: E402
+from harness.tools import ToolContext  # noqa: E402
+import agent  # noqa: E402
 
 
 def make_skill_zip(manifest: dict, files: dict[str, str] | None = None) -> bytes:
@@ -132,6 +137,71 @@ class SkillInstallerTests(unittest.TestCase):
             self.assertEqual(result["id"], "light-skill")
             self.assertEqual(registry.get_skill("light-skill").description, "用于提取资料重点并生成结构清晰的内容摘要。")
             self.assertTrue((root / "light-skill" / "SKILL.md").is_file())
+
+    def test_installed_directory_uses_name_declared_by_skill_md(self):
+        original = "---\nname: aligned-skill\ndescription: 对齐名称\n---\n按说明执行。"
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("vendor-package-1-2-3/SKILL.md", original)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = preflight_skill_archive(buffer.getvalue(), set(), package_hint="vendor-package-1-2-3.zip")
+            result = install_preflighted_skill(candidate, root)
+
+            self.assertEqual(result["id"], "aligned-skill")
+            self.assertTrue((root / "aligned-skill" / "SKILL.md").is_file())
+            self.assertFalse((root / "vendor-package-1-2-3").exists())
+            self.assertEqual((root / "aligned-skill" / "SKILL.md").read_text(encoding="utf-8"), original)
+
+    def test_remote_skill_url_rejects_plain_http_by_default(self):
+        with self.assertRaisesRegex(SkillDownloadError, "HTTPS"):
+            from capabilities.remote_skill_installer import _validate_source_url
+
+            _validate_source_url("http://example.com/skill.zip")
+
+
+class RemoteSkillInstallerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_archive_is_downloaded_inside_sandbox(self):
+        content = make_skill_zip({"name": "remote-skill", "description": "远程技能"})
+
+        class FakeSandbox:
+            is_active = True
+
+            def __init__(self):
+                self.commands = []
+
+            async def aexecute(self, command, timeout=None):
+                self.commands.append(command)
+                return SimpleNamespace(exit_code=0, output="")
+
+            async def adownload_files(self, _paths):
+                return [SimpleNamespace(error=None, content=content)]
+
+        sandbox = FakeSandbox()
+        with patch.dict("os.environ", {"SKILL_INSTALL_ALLOWED_HOSTS": "skills.internal", "SKILL_INSTALL_ALLOW_HTTP": "1"}, clear=False):
+            downloaded = await download_skill_archive(
+                sandbox,
+                "http://skills.internal/remote.zip",
+                max_bytes=1024 * 1024,
+            )
+
+        self.assertEqual(downloaded, content)
+        self.assertIn("curl", sandbox.commands[0])
+        self.assertIn("--max-redirs 0", sandbox.commands[0])
+
+    async def test_agent_installs_preflighted_archive_for_current_user(self):
+        content = make_skill_zip({"name": "remote-skill", "description": "远程技能"})
+        context = ToolContext(tenant_id="tenant-a", user_id="user-a", sandbox_backend=object())
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(agent, "get_user_skill_root", return_value=Path(directory)), \
+                patch.object(agent, "download_skill_archive", return_value=content):
+            result = await agent._execute_install_skill_from_url(
+                {"url": "https://skills.example/remote.zip"},
+                context,
+            )
+
+        self.assertIn("已通过预检并安装", result.content)
+        self.assertEqual(result.data["installed_skill"]["id"], "remote-skill")
 
 
 if __name__ == "__main__":

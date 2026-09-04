@@ -106,6 +106,17 @@ def _bare_skill_description(instructions: str, name: str) -> str:
     return (" ".join(paragraph) or heading or name)[:180]
 
 
+def _declared_skill_name(instructions: str) -> str:
+    normalized = instructions.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return ""
+    front_matter, separator, _body = normalized[4:].partition("\n---\n")
+    if not separator:
+        return ""
+    match = re.search(r"(?mi)^name\s*:\s*([^\n]+)$", front_matter)
+    return match.group(1).strip().strip("\"'") if match else ""
+
+
 def _validate_declared_paths(manifest: dict, files: Mapping[PurePosixPath, bytes], field: str) -> None:
     declared = manifest.get(field, [])
     if declared is None:
@@ -136,7 +147,7 @@ def preflight_skill_files(
     else:
         manifest = {}
 
-    name = _validate_identifier(manifest.get("name"), "name") if manifest else _fallback_skill_name(package_hint or folder_hint, package_files)
+    package_name = _validate_identifier(manifest.get("name"), "name") if manifest else _fallback_skill_name(package_hint or folder_hint, package_files)
     version = str(manifest.get("version") or "1.0.0").strip()
     if not version or len(version) > 50:
         raise SkillPackageError("version 不能为空且不能超过 50 个字符")
@@ -153,10 +164,6 @@ def preflight_skill_files(
     if unknown_tools:
         raise SkillPackageError(f"技能包引用了未注册工具: {', '.join(sorted(unknown_tools))}")
 
-    conflicts = ({name} | aliases) & set(existing_identifiers)
-    if conflicts:
-        raise SkillPackageError(f"技能名称或别名已存在: {', '.join(sorted(conflicts))}")
-
     entrypoint = _safe_member_path(str(manifest.get("entrypoint") or "SKILL.md"))
     if entrypoint not in package_files:
         entrypoint = next((path for path in package_files if path.name.lower() == "skill.md"), entrypoint)
@@ -170,6 +177,11 @@ def preflight_skill_files(
         raise SkillPackageError("entrypoint 不是有效的 UTF-8 文本") from exc
     if not instructions:
         raise SkillPackageError("entrypoint 不能为空")
+    declared_name = _declared_skill_name(instructions)
+    name = _validate_identifier(declared_name, "SKILL.md name") if declared_name else package_name
+    conflicts = ({name} | aliases) & set(existing_identifiers)
+    if conflicts:
+        raise SkillPackageError(f"技能名称或别名已存在: {', '.join(sorted(conflicts))}")
     if manifest_path is None and entrypoint != PurePosixPath("SKILL.md"):
         package_files[PurePosixPath("SKILL.md")] = package_files.pop(entrypoint)
         entrypoint = PurePosixPath("SKILL.md")

@@ -9,6 +9,23 @@ const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:
 const apiUrl = (path: string) => /^https?:\/\//.test(path) ? path : `${API_BASE_URL}${path}`;
 const createConversationId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const MAX_UPLOAD_FILE_BYTES = 100 * 1024 * 1024;
+const RETRYABLE_API_STATUS = new Set([502, 503, 504]);
+
+const fetchApiWithRetry = async (path: string, attempts = 5) => {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(apiUrl(path), { cache: "no-store" });
+      if (!RETRYABLE_API_STATUS.has(response.status) || attempt === attempts - 1) return response;
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) throw error;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500 * (2 ** attempt)));
+  }
+  throw lastError instanceof Error ? lastError : new Error("API 请求失败");
+};
 
 interface Action {
   text: string;
@@ -119,7 +136,7 @@ interface StoredConversation {
 }
 
 interface StreamEvent {
-  type: "run_started" | "task_group" | "thought" | "thought_delta" | "turn_delta" | "turn_commit" | "turn_clear" | "action" | "content_delta" | "content_reset" | "content" | "approval_required" | "error";
+  type: "run_started" | "task_group" | "thought" | "thought_delta" | "turn_delta" | "turn_commit" | "turn_clear" | "action" | "content_delta" | "content_reset" | "content" | "approval_required" | "skills_changed" | "error";
   run_id?: string;
   title?: string;
   text?: string;
@@ -414,6 +431,7 @@ export default function Home() {
   const [currentConversationId, setCurrentConversationId] = useState<string>(createConversationId);
   const [activePreviewType, setActivePreviewType] = useState("text");
   const [activePreviewContent, setActivePreviewContent] = useState("");
+  const [activePreviewUrl, setActivePreviewUrl] = useState("");
   const [activePreviewTitle, setActivePreviewTitle] = useState("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
@@ -462,8 +480,9 @@ export default function Home() {
     setIsLoadingConversations(true);
     const request = (async () => {
       try {
-        const response = await fetch(apiUrl("/api/v1/conversations"), { cache: "no-store" });
-        if (response.ok) setConversations(await response.json());
+        const response = await fetchApiWithRetry("/api/v1/conversations");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setConversations(await response.json());
       } catch (error) {
         console.error("加载对话列表失败", error);
       } finally {
@@ -484,7 +503,7 @@ export default function Home() {
     setIsLoadingSkills(true);
     const request = (async () => {
       try {
-        const response = await fetch(apiUrl("/api/v1/skills"), { cache: "no-store" });
+        const response = await fetchApiWithRetry("/api/v1/skills");
         if (!response.ok) throw new Error(`加载失败 (HTTP ${response.status})`);
         const payload = await response.json() as { skills: SkillItem[] };
         setSkills(payload.skills);
@@ -534,7 +553,16 @@ export default function Home() {
   useEffect(() => {
     void refreshConversations();
     const preloadTimer = window.setTimeout(() => { void refreshSkills(); }, 400);
-    return () => window.clearTimeout(preloadTimer);
+    const refreshAfterIdle = () => {
+      if (document.visibilityState === "visible") void refreshConversations();
+    };
+    window.addEventListener("pageshow", refreshAfterIdle);
+    document.addEventListener("visibilitychange", refreshAfterIdle);
+    return () => {
+      window.clearTimeout(preloadTimer);
+      window.removeEventListener("pageshow", refreshAfterIdle);
+      document.removeEventListener("visibilitychange", refreshAfterIdle);
+    };
   }, []);
 
   useEffect(() => {
@@ -628,7 +656,7 @@ export default function Home() {
     setIsLoadingHistory(true);
     chatAutoScrollRef.current = true;
     try {
-      const response = await fetch(apiUrl(`/api/v1/conversations/${conversationId}`), { cache: "no-store" });
+      const response = await fetchApiWithRetry(`/api/v1/conversations/${conversationId}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const stored = await response.json() as StoredConversation;
       setPendingApproval(stored.pending_approval ? {
@@ -763,6 +791,11 @@ export default function Home() {
 
   const applyStreamEvent = (event: StreamEvent) => {
     const assistantId = activeAssistantMessageIdRef.current;
+    if (event.type === "skills_changed") {
+      skillsLoadedAtRef.current = 0;
+      void refreshSkills(true);
+      return;
+    }
     if (event.type === "run_started" && event.run_id) {
       setActiveRunId(event.run_id);
       setElapsedNow(Date.now());
@@ -1255,10 +1288,12 @@ export default function Home() {
 
   const showArtifact = (artifact: ArtifactView) => {
     setActivePreviewType(artifact.previewKind);
+    setActivePreviewUrl(artifact.previewUrl || "");
     const nativePreview = artifact.previewKind === "pdf" || artifact.previewKind === "image";
     setActivePreviewContent(
-      (nativePreview ? artifact.previewUrl : artifact.html || artifact.markdown || artifact.text || artifact.previewUrl)
-      || "暂无预览内容",
+      nativePreview
+        ? artifact.previewUrl || ""
+        : artifact.html || artifact.markdown || artifact.text || "",
     );
     setActivePreviewTitle(artifact.title);
     setIsPreviewOpen(true);
@@ -1768,7 +1803,13 @@ export default function Home() {
             </div>
             <div className={styles.iframeContainer}>
               {activePreviewType === "html" ? (
-                <iframe key={isPreviewFullscreen ? "fullscreen" : "panel"} className={styles.previewIframe} title="产物预览" sandbox="allow-scripts" srcDoc={activePreviewContent} />
+                activePreviewContent ? (
+                  <iframe key={isPreviewFullscreen ? "fullscreen" : "panel"} className={styles.previewIframe} title="产物预览" sandbox="allow-scripts" srcDoc={activePreviewContent} />
+                ) : activePreviewUrl ? (
+                  <iframe key={isPreviewFullscreen ? "fullscreen-url" : "panel-url"} className={styles.previewIframe} title="产物预览" sandbox="allow-scripts" src={apiUrl(activePreviewUrl)} />
+                ) : (
+                  <div className={styles.documentPreview}>暂无预览内容</div>
+                )
               ) : activePreviewType === "pdf" ? (
                 <iframe className={styles.filePreviewIframe} title="PDF 预览" src={apiUrl(activePreviewContent)} />
               ) : activePreviewType === "image" ? (

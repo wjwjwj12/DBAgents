@@ -42,6 +42,8 @@ from orchestration.runner import DeepAgentRunner
 from rag.chunker import DocumentChunker
 from security import create_download_url, create_preview_url
 from capabilities.skill_registry import SkillRegistry, get_user_skill_root
+from capabilities.skill_installer import SkillPackageError, install_preflighted_skill, preflight_skill_archive
+from capabilities.remote_skill_installer import SkillDownloadError, download_skill_archive
 from runtime_paths import STORAGE_DIR as RUNTIME_STORAGE_DIR
 from auth import LOCAL_IDENTITY, RequestIdentity, get_or_create_user, normalize_identity, owned_conversation
 
@@ -194,6 +196,38 @@ async def _execute_request_user_confirmation(arguments, _context):
     return ToolResult(content=f"用户已确认 {stage}，可以继续执行后续步骤。")
 
 
+async def _execute_install_skill_from_url(arguments, context):
+    source_url = str(arguments.get("url", "")).strip()
+    if not source_url:
+        return ToolResult(content="Skill 安装失败：url 不能为空。")
+    max_bytes = max(1, int(os.getenv("MAX_SKILL_UPLOAD_BYTES", str(20 * 1024 * 1024))))
+    registry = SkillRegistry(skill_registry.skill_root, [get_user_skill_root(context.tenant_id, context.user_id)], load_instructions=False)
+    existing = set()
+    for skill in registry.list_skills():
+        existing.add(str(skill["id"]))
+        existing.update(str(alias) for alias in skill["aliases"])
+    try:
+        content = await download_skill_archive(context.sandbox_backend, source_url, max_bytes=max_bytes)
+        candidate = await asyncio.to_thread(
+            preflight_skill_archive,
+            content,
+            tool_registry.names(),
+            existing,
+            Path(urlsplit(source_url).path).name or "downloaded-skill.zip",
+        )
+        installed = await asyncio.to_thread(
+            install_preflighted_skill,
+            candidate,
+            get_user_skill_root(context.tenant_id, context.user_id),
+        )
+    except (SkillDownloadError, SkillPackageError, OSError, ValueError) as exc:
+        return ToolResult(content=f"Skill 安装失败：{exc}")
+    return ToolResult(
+        content=f"Skill `{installed['id']}` 已通过预检并安装到当前用户的技能广场，下次任务即可选择或按需加载。",
+        data={"installed_skill": installed},
+    )
+
+
 def _latest_ppt_artifact(db, conversation_id: str):
     return (
         db.query(ArtifactModel)
@@ -325,6 +359,23 @@ def _create_tool_registry() -> ToolRegistry:
             "required": ["title", "steps"],
         },
         handler=_execute_update_plan,
+    ))
+    registry.register(ToolDefinition(
+        name="install_skill_from_url",
+        description=(
+            "仅当用户明确要求安装 Skill 时，从用户提供或已核实的直接 ZIP 下载地址安装到当前用户的技能广场。"
+            "下载在沙箱中完成，平台取回后执行安全预检；普通任务不得自行安装 Skill。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "可直接下载 ZIP 技能包的 HTTPS 地址"},
+            },
+            "required": ["url"],
+        },
+        handler=_execute_install_skill_from_url,
+        timeout_seconds=120,
+        max_attempts=1,
     ))
     registry.register(ToolDefinition(
         name="search_web",
@@ -519,6 +570,7 @@ def _base_system_prompt(
 - 只有工具实际返回产物后，才能告诉用户文件已生成。不要伪造工具执行、搜索来源或产物。
 - 历史产物信息只用于定位可编辑文件，不得把 HTML、CSS 或其他产物源码复制到普通回答中。
 - 可根据任务连续加载多个 Skill；系统不会提前替你限定任务类型。
+- 只有用户明确要求安装 Skill 时，才可调用 install_skill_from_url；一般任务只能使用技能广场中已有的 Skill。安装地址必须是可直接下载的 ZIP，安装失败后不得对同一地址反复重试。
 - 回答使用清晰、克制、专业的文字。不要在标题、段落或列表前添加 emoji、颜文字、装饰性小图标或 Logo；需要分点时仅使用标准 Markdown 列表。
 - 最终回答直接从结论或正文开始，不要输出“我来分析”“让我先梳理”“接下来我会”等过程性开场；这些内容属于思考过程，不属于交付结果。
 
@@ -765,6 +817,12 @@ def _persist_artifact(db, run_id: str, candidate: dict, index: int):
     db.commit()
     db.refresh(artifact)
     preview_kind = str(candidate.get("preview_kind", "text"))
+    if preview_kind not in {"html", "markdown", "text", "pdf", "image"}:
+        preview_kind, inferred_content = read_artifact_preview(artifact)
+        if not content:
+            content = inferred_content
+    elif preview_kind == "html" and not content:
+        _kind, content = read_artifact_preview(artifact)
     if artifact.mime_type == PPTX_MIME and pptx_pdf_preview_available(artifact_file):
         preview_kind = "pdf"
         content = ""
@@ -1096,6 +1154,8 @@ async def run_agent(
                     db.commit()
                 action_text = f"{event.payload['name']} 执行完成"
                 yield _stream_chunk({'type': 'action', 'text': action_text, 'status': 'done', 'action_key': f"tool:{event.payload['name']}"}, thread_event)
+                if event.payload["name"] == "install_skill_from_url" and "已通过预检并安装" in str(event.payload.get("result", "")):
+                    yield _stream_chunk({'type': 'skills_changed'}, thread_event)
             elif event.event_type == "model_empty":
                 yield _stream_chunk({'type': 'action', 'text': '模型未返回有效内容，Harness 正在自动恢复', 'status': 'loading'}, thread_event)
             elif event.event_type == "reasoning_delta":

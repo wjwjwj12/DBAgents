@@ -30,6 +30,7 @@ class ToolContext:
     plan_update: Optional[Callable[[str, list[str]], None]] = None
     workspace_files: Dict[str, bytes] = field(default_factory=dict)
     sandbox_file_paths: Dict[str, str] = field(default_factory=dict)
+    sandbox_backend: Any = None
 
 
 @dataclass

@@ -103,8 +103,8 @@ class DetachedEventStreamTests(unittest.IsolatedAsyncioTestCase):
 
 class UploadTests(unittest.IsolatedAsyncioTestCase):
     def test_default_cors_supports_localhost_and_loopback(self):
-        self.assertIn("http://localhost:6477", main.ALLOWED_ORIGINS)
-        self.assertIn("http://127.0.0.1:6477", main.ALLOWED_ORIGINS)
+        self.assertIn("http://localhost:6080", main.ALLOWED_ORIGINS)
+        self.assertIn("http://127.0.0.1:6080", main.ALLOWED_ORIGINS)
 
     def test_local_pdf_parser_extracts_text(self):
         import pymupdf
@@ -357,6 +357,32 @@ class RoutingAndRetrievalTests(unittest.TestCase):
             }, 0)
 
             self.assertEqual(Path(artifact.storage_path).read_bytes(), payload)
+
+    def test_html_sandbox_artifact_is_available_to_streaming_preview(self):
+        payload = "<!doctype html><html><body><h1>实时预览</h1></body></html>".encode("utf-8")
+
+        class FakeDb:
+            def add(self, _artifact):
+                return None
+
+            def commit(self):
+                return None
+
+            def refresh(self, artifact):
+                artifact.id = "artifact-html"
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(agent, "STORAGE_DIR", temp_dir):
+            _artifact, result = agent._persist_artifact(FakeDb(), "run-html", {
+                "artifact_type": "html",
+                "title": "交互页面",
+                "extension": "html",
+                "mime_type": "text/html",
+                "content_bytes": payload,
+                "preview_kind": "none",
+            }, 0)
+
+        self.assertEqual(result["preview_kind"], "html")
+        self.assertEqual(result["html"], payload.decode("utf-8"))
 
 
 class RunControlTests(unittest.IsolatedAsyncioTestCase):

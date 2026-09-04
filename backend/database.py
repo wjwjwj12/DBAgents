@@ -7,7 +7,8 @@ from runtime_paths import DATABASE_FILE
 DB_PATH = os.getenv("DATABASE_URL", f"sqlite:///{DATABASE_FILE.as_posix()}")
 
 engine = create_engine(
-    DB_PATH, 
+    DB_PATH,
+    pool_pre_ping=True,
     connect_args={"check_same_thread": False} if DB_PATH.startswith("sqlite") else {}
 )
 

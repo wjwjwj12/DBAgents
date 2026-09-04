@@ -59,11 +59,13 @@ def _normalized_skill_entrypoint(package_name: str, content: bytes) -> bytes:
     text = content.decode("utf-8-sig")
     body = text
     description = ""
+    front_matter_lines: List[str] = []
     normalized = text.replace("\r\n", "\n")
     if normalized.startswith("---\n"):
         front_matter, separator, remainder = normalized[4:].partition("\n---\n")
         if separator:
             body = remainder
+            front_matter_lines = front_matter.splitlines()
             match = re.search(r"(?mi)^description\s*:\s*[\"']?([^\n\"']+)", front_matter)
             if match:
                 description = match.group(1).strip()
@@ -86,6 +88,25 @@ def _normalized_skill_entrypoint(package_name: str, content: bytes) -> bytes:
                 break
     description = re.sub(r"\s+", " ", description or f"{package_name} skill").strip()[:180]
     safe_description = description.replace("\\", "\\\\").replace('"', '\\"')
+    if front_matter_lines:
+        rewritten = []
+        has_name = False
+        has_description = False
+        for line in front_matter_lines:
+            if re.match(r"^name\s*:", line, re.IGNORECASE):
+                rewritten.append(f"name: {package_name}")
+                has_name = True
+            elif re.match(r"^description\s*:", line, re.IGNORECASE):
+                value = line.split(":", 1)[1].strip()
+                rewritten.append(line if value in {">", ">-", "|", "|-"} else f'description: "{safe_description}"')
+                has_description = True
+            else:
+                rewritten.append(line)
+        if not has_name:
+            rewritten.insert(0, f"name: {package_name}")
+        if not has_description:
+            rewritten.append(f'description: "{safe_description}"')
+        return f"---\n{'\n'.join(rewritten)}\n---\n{body.lstrip()}".encode("utf-8")
     return (
         f'---\nname: {package_name}\ndescription: "{safe_description}"\n---\n{body.lstrip()}'
     ).encode("utf-8")
@@ -233,6 +254,7 @@ class DeepAgentRunner:
         default_backend = await get_thread_backend(thread_id)
         if context is not None and supports_execution(default_backend):
             self.sandbox_backend = default_backend
+            context.sandbox_backend = default_backend
             uploads = list(context.workspace_files.items())
             for virtual_path, source_path in context.sandbox_file_paths.items():
                 path = Path(source_path)
@@ -250,6 +272,8 @@ class DeepAgentRunner:
             )
         else:
             self.sandbox_backend = None
+            if context is not None:
+                context.sandbox_backend = None
             self.sandbox_output_state = {}
         return CompositeBackend(
             default=default_backend,

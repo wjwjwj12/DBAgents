@@ -267,7 +267,7 @@ async def on_shutdown():
     from orchestration.checkpoint import close_checkpointer
     await close_checkpointer()
 
-DEFAULT_ALLOWED_ORIGINS = "http://localhost:6477,http://127.0.0.1:6477"
+DEFAULT_ALLOWED_ORIGINS = "http://localhost:6080,http://127.0.0.1:6080"
 ALLOWED_ORIGINS = list(dict.fromkeys(
     origin.strip()
     for origin in f"{DEFAULT_ALLOWED_ORIGINS},{os.getenv('ALLOWED_ORIGINS', '')}".split(",")
@@ -297,7 +297,7 @@ FILE_PARSE_URL = os.getenv("FILE_PARSE_URL")
 FILE_PARSE_TOKEN = os.getenv("FILE_PARSE_TOKEN")
 FILE_PARSE_BACKEND = os.getenv("FILE_PARSE_BACKEND", "pipeline")
 FILE_PARSE_TIMEOUT_SECONDS = float(os.getenv("FILE_PARSE_TIMEOUT_SECONDS", "600"))
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:6477").rstrip("/")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:6080").rstrip("/")
 ATTACHMENT_DIR = str(RUNTIME_ATTACHMENT_DIR)
 os.makedirs(ATTACHMENT_DIR, exist_ok=True)
 
@@ -1077,12 +1077,18 @@ async def preview_artifact(
             if preview_path is None:
                 raise HTTPException(status_code=503, detail="PPTX preview converter is not configured")
             preview_mime_type = "application/pdf"
-        elif art.mime_type not in {"application/pdf"} and not art.mime_type.startswith("image/"):
+        elif art.mime_type not in {"application/pdf", "text/html"} and not art.mime_type.startswith("image/"):
             raise HTTPException(status_code=415, detail="This artifact type has no native browser preview")
+        headers = {"Content-Disposition": "inline"}
+        if preview_mime_type == "text/html":
+            headers["Content-Security-Policy"] = (
+                "sandbox allow-scripts; default-src 'none'; img-src data: blob:; "
+                "font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+            )
         return FileResponse(
             path=preview_path,
             media_type=preview_mime_type,
-            headers={"Content-Disposition": "inline"},
+            headers=headers,
         )
     finally:
         db.close()

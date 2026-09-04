@@ -95,12 +95,14 @@ class DagExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
     def test_skill_entrypoint_is_normalized_only_in_virtual_copy(self):
-        original = b"---\nname: different-name\ndescription: useful skill\n---\n# Instructions\nDo work.\n"
+        original = b"---\nname: different-name\ndescription: useful skill\nversion: 1.2.3\nmetadata:\n  runtime: node\n---\n# Instructions\nDo work.\n"
 
         normalized = _normalized_skill_entrypoint("uploaded-package-1-0-0", original).decode()
 
         self.assertIn("name: uploaded-package-1-0-0", normalized)
         self.assertIn('description: "useful skill"', normalized)
+        self.assertIn("version: 1.2.3", normalized)
+        self.assertIn("runtime: node", normalized)
         self.assertIn("# Instructions", normalized)
         self.assertIn(b"name: different-name", original)
 
@@ -113,6 +115,15 @@ class RuntimeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(normalized.startswith("---\nname: plain-skill-1-0-0\n"))
         self.assertIn("description:", normalized)
         self.assertIn("# Plain Skill", normalized)
+
+    def test_skill_entrypoint_preserves_multiline_description(self):
+        normalized = _normalized_skill_entrypoint(
+            "multiline-skill",
+            b"---\nname: old-name\ndescription: >-\n  First line\n  second line\nversion: 2\n---\nRun it.\n",
+        ).decode()
+
+        self.assertIn("description: >-\n  First line\n  second line", normalized)
+        self.assertIn("version: 2", normalized)
 
     def test_runtime_contract_explains_skill_execution_boundary(self):
         contract = DeepAgentRunner._runtime_contract(

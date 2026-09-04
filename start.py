@@ -5,10 +5,12 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 import urllib.request
 from pathlib import Path
 
 from dotenv import load_dotenv
+from service_diagnostics import write_crash_report
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -33,7 +35,7 @@ def build_commands(production: bool = True):
     backend_host = os.getenv("APP_HOST", "127.0.0.1")
     backend_port = os.getenv("APP_PORT", "14499")
     frontend_host = os.getenv("FRONTEND_HOST", "127.0.0.1")
-    frontend_port = os.getenv("FRONTEND_PORT", "6477")
+    frontend_port = os.getenv("FRONTEND_PORT", "6080")
     frontend_script = "start" if production else "dev"
 
     backend_command = [
@@ -86,6 +88,27 @@ def start_service(command, cwd: Path):
     else:
         options["start_new_session"] = True
     return subprocess.Popen(command, **options)
+
+
+def process_exit_reason(returncode: int) -> str:
+    if returncode < 0 and os.name != "nt":
+        try:
+            name = signal.Signals(-returncode).name
+        except ValueError:
+            name = "UNKNOWN"
+        return f"signal {name} ({-returncode})"
+    if returncode == 137:
+        return "exit code 137 (possible SIGKILL/OOM)"
+    return f"exit code {returncode}"
+
+
+def restart_service(name: str, command, cwd: Path, ready_url: str, *, delay: float):
+    print(f"{name} 服务将在 {delay:g} 秒后单独重启。", file=sys.stderr, flush=True)
+    time.sleep(delay)
+    process = start_service(command, cwd)
+    print(f"{name} 服务重新启动，PID={process.pid}。", file=sys.stderr, flush=True)
+    wait_until_ready(ready_url, [(name, process)])
+    return process
 
 
 def signal_process_tree(process, force: bool = False) -> None:
@@ -156,13 +179,19 @@ def main() -> int:
         elif production and not (FRONTEND_DIR / ".next" / "BUILD_ID").is_file():
             raise RuntimeError("未找到生产构建，请先执行 python start.py --build。")
 
+        service_specs = {
+            "backend": (backend_command, ROOT_DIR, f"http://127.0.0.1:{backend_port}/docs"),
+            "frontend": (frontend_command, FRONTEND_DIR, f"http://127.0.0.1:{frontend_port}/"),
+        }
         processes = [
-            ("backend", start_service(backend_command, ROOT_DIR)),
-            ("frontend", start_service(frontend_command, FRONTEND_DIR)),
+            (name, start_service(command, cwd))
+            for name, (command, cwd, _ready_url) in service_specs.items()
         ]
         try:
             wait_until_ready(f"http://127.0.0.1:{backend_port}/docs", processes)
             wait_until_ready(f"http://127.0.0.1:{frontend_port}/", processes)
+            for name, process in processes:
+                print(f"{name} 服务进程 PID={process.pid}。", flush=True)
             print("\nauto-agent 前后端已启动", flush=True)
             print(f"网页入口：http://127.0.0.1:{frontend_port}", flush=True)
             print(f"接口文档：http://127.0.0.1:{backend_port}/docs", flush=True)
@@ -172,30 +201,58 @@ def main() -> int:
             print(f"后端日志：{data_dir.resolve() / 'logs' / 'app.log'}", flush=True)
             print("按 Ctrl+C 同时停止前后端。\n", flush=True)
 
+            restart_history = {name: [] for name in service_specs}
+            restart_limit = max(1, int(os.getenv("CHILD_RESTART_LIMIT", "5")))
+            restart_window = max(30, int(os.getenv("CHILD_RESTART_WINDOW_SECONDS", "300")))
+            restart_delay = max(0.2, float(os.getenv("CHILD_RESTART_DELAY_SECONDS", "1")))
             while True:
-                exited = next(
-                    (
-                        (name, process.returncode)
-                        for name, process in processes
-                        if process.poll() is not None
-                    ),
-                    None,
-                )
-                if exited is not None:
-                    name, returncode = exited
+                for index, (name, process) in enumerate(processes):
+                    returncode = process.poll()
+                    if returncode is None:
+                        continue
+                    now = time.monotonic()
+                    recent = [stamp for stamp in restart_history[name] if now - stamp < restart_window]
+                    restart_history[name] = recent
                     print(
-                        f"{name} 服务意外退出，进程退出码：{returncode}",
+                        f"{name} 服务意外退出：{process_exit_reason(returncode)}，PID={process.pid}。",
                         file=sys.stderr,
                         flush=True,
                     )
-                    return returncode or 1
+                    report_path = write_crash_report(
+                        name,
+                        process.pid,
+                        returncode,
+                        process_exit_reason(returncode),
+                    )
+                    if report_path is not None:
+                        print(f"崩溃现场已保存：{report_path}", file=sys.stderr, flush=True)
+                    if len(recent) >= restart_limit:
+                        print(
+                            f"{name} 服务在 {restart_window} 秒内连续退出超过 {restart_limit} 次，交由 systemd 重启整组服务。",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        return returncode or 1
+                    command, cwd, ready_url = service_specs[name]
+                    try:
+                        replacement = restart_service(name, command, cwd, ready_url, delay=restart_delay)
+                    except RuntimeError as exc:
+                        print(f"{name} 服务单独重启失败：{exc}", file=sys.stderr, flush=True)
+                        return returncode or 1
+                    restart_history[name].append(time.monotonic())
+                    processes[index] = (name, replacement)
                 time.sleep(0.5)
         finally:
             stop_processes(processes)
     except KeyboardInterrupt:
         return 0
-    except (RuntimeError, subprocess.CalledProcessError) as exc:
+    except Exception as exc:
+        details = traceback.format_exc()
+        report_path = write_crash_report("launcher", os.getpid(), 1, details)
         print(f"启动失败：{exc}", file=sys.stderr)
+        print(details, file=sys.stderr, flush=True)
+        if report_path is not None:
+            print(f"故障现场已保存：{report_path}", file=sys.stderr, flush=True)
         return 1
 
 
